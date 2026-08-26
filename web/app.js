@@ -43,7 +43,11 @@ async function boot() {
 
 function wireDropZone() {
   const drop = $('drop');
-  $('file').onchange = (e) => e.target.files[0] && open(e.target.files[0]);
+  $('file').onchange = (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';   // so re-picking the same file fires again
+    if (f) open(f);
+  };
   for (const ev of ['dragenter', 'dragover']) {
     drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); });
   }
@@ -61,7 +65,6 @@ async function open(file) {
   try {
     const data = new Uint8Array(await file.arrayBuffer());
     state.doc = await pdfjs.getDocument({ data, ...PDFJS_ASSETS }).promise;
-    state.origName = file.name.replace(/\.pdf$/i, '');
     state.pages = [];
     state.hits = [];
     state.manual = [];
@@ -251,6 +254,8 @@ function attachDraw(ov) {
       width: `${Math.abs(x - start.x)}px`, height: `${Math.abs(y - start.y)}px`,
     });
   };
+  const cancel = () => { start = null; ghost?.remove(); ghost = null; };
+  ov.onmouseleave = cancel;
   ov.onmouseup = (e) => {
     if (!start) return;
     const r = ov.getBoundingClientRect();

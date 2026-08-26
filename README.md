@@ -89,6 +89,10 @@ Being clear about this matters more than the feature list.
   not be found by text search. Draw a box.
 - **Review is not optional.** Medium and Low hits exist because automatic
   matching cannot tell a student named Jane from a word problem about Jane.
+- **Text rotated inside the page** — a diagonal watermark, a vertical axis
+  label — may get a box that does not sit squarely over it. Whole-page rotation
+  is handled correctly. A misplaced box is visible during review and can be
+  deleted and redrawn.
 
 ## Verification
 
