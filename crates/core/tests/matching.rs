@@ -1,0 +1,148 @@
+use redactor_core::matching::{find, TextItem};
+use redactor_core::variants::{variants, Tier};
+
+/// Build a run of fragments on one line, laid out flush unless a gap is asked
+/// for. `(text, gap_before)` where gap is in points.
+fn line(parts: &[(&str, f32)]) -> Vec<TextItem> {
+    let mut x = 50.0f32;
+    let mut out = Vec::new();
+    for (t, gap) in parts {
+        x += gap;
+        let w = t.chars().count() as f32 * 6.0;
+        out.push(TextItem { text: (*t).into(), x, y: 100.0, w, h: 12.0, eol: false });
+        x += w;
+    }
+    if let Some(l) = out.last_mut() {
+        l.eol = true;
+    }
+    out
+}
+
+fn hits(items: &[TextItem], name: &str) -> Vec<(String, Tier)> {
+    let v = variants(name, &[]);
+    find(items, &v).into_iter().map(|m| (m.matched, m.tier)).collect()
+}
+
+#[test]
+fn finds_a_plain_name() {
+    let items = line(&[("Name:", 0.0), ("Jane Doe", 6.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(m, t)| m == "Jane Doe" && *t == Tier::High), "{:?}", h);
+}
+
+/// The case that breaks naive per-fragment matching. Producers split runs at
+/// kerning pairs, so the name arrives in pieces with no gaps between them.
+#[test]
+fn finds_a_name_split_across_fragments() {
+    let items = line(&[("Name:", 0.0), ("Ja", 6.0), ("ne D", 0.0), ("oe", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(
+        h.iter().any(|(_, t)| *t == Tier::High),
+        "split name must still match at High: {:?}", h
+    );
+}
+
+#[test]
+fn split_match_produces_a_box_per_fragment() {
+    let items = line(&[("Ja", 0.0), ("ne D", 0.0), ("oe", 0.0)]);
+    let v = variants("Jane Doe", &[]);
+    let m = find(&items, &v);
+    let high: Vec<_> = m.iter().filter(|m| m.tier == Tier::High).collect();
+    assert!(!high.is_empty());
+    // Three fragments touched -> three boxes, together covering the whole name.
+    assert_eq!(high[0].boxes.len(), 3, "{:?}", high[0].boxes);
+}
+
+#[test]
+fn finds_unity_id_with_trailing_digits() {
+    let items = line(&[("Unity ID:", 0.0), ("jdoe2", 6.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(m, _)| m == "jdoe2"), "trailing digit not claimed: {:?}", h);
+}
+
+#[test]
+fn finds_email() {
+    let items = line(&[("jdoe2@ncsu.edu", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(m, _)| m.starts_with("jdoe2")), "{:?}", h);
+}
+
+#[test]
+fn matches_across_a_line_break() {
+    // "Jo-\nhnson" hyphenated by the wrap.
+    let mut items = line(&[("Name: Jo-", 0.0)]);
+    items[0].eol = true;
+    items.push(TextItem { text: "hnson".into(), x: 50.0, y: 115.0, w: 30.0, h: 12.0, eol: true });
+    let h = hits(&items, "Amy Johnson");
+    assert!(h.iter().any(|(_, t)| *t <= Tier::Medium), "hyphenated wrap missed: {:?}", h);
+}
+
+// --- false positives: these must not be auto-applied ---
+
+#[test]
+fn does_not_fire_inside_a_longer_word() {
+    let items = line(&[("The loop doesn't terminate", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(
+        !h.iter().any(|(m, _)| m.to_lowercase() == "doe"),
+        "'doe' fired inside 'doesn't': {:?}", h
+    );
+}
+
+#[test]
+fn bare_first_name_in_prose_is_not_high() {
+    let items = line(&[("Jane has 5 apples and gives 2 away", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(
+        !h.iter().any(|(m, t)| m == "Jane" && *t == Tier::High),
+        "prose first-name must not be High: {:?}", h
+    );
+}
+
+#[test]
+fn common_word_name_is_not_high() {
+    let items = line(&[("This will print the value", 0.0)]);
+    let h = hits(&items, "Will Smith");
+    assert!(
+        !h.iter().any(|(m, t)| m.to_lowercase() == "will" && *t <= Tier::Medium),
+        "'will' must stay Low: {:?}", h
+    );
+}
+
+#[test]
+fn nested_matches_are_suppressed() {
+    // "Jane Doe" should yield one High hit, not also bare "jane" and "doe".
+    let items = line(&[("Jane Doe", 0.0)]);
+    let v = variants("Jane Doe", &[]);
+    let m = find(&items, &v);
+    assert_eq!(m.len(), 1, "expected one merged hit, got {:?}",
+        m.iter().map(|x| (&x.matched, x.tier)).collect::<Vec<_>>());
+}
+
+#[test]
+fn diacritics_and_case_still_match() {
+    let items = line(&[("JOSÉ GARCÍA", 0.0)]);
+    let h = hits(&items, "Jose Garcia");
+    assert!(h.iter().any(|(_, t)| *t == Tier::High), "{:?}", h);
+}
+
+#[test]
+fn zero_width_characters_do_not_hide_a_name() {
+    let items = line(&[("Ja\u{200B}ne Doe", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(_, t)| *t == Tier::High), "zero-width defeated match: {:?}", h);
+}
+
+#[test]
+fn typo_is_found_at_low_tier_only() {
+    let items = line(&[("Submitted by Johnsen", 0.0)]);
+    let h = hits(&items, "Amy Johnson");
+    let t = h.iter().find(|(m, _)| m.to_lowercase() == "johnsen");
+    assert!(t.is_some(), "typo not found: {:?}", h);
+    assert_eq!(t.unwrap().1, Tier::Low, "typo must be Low");
+}
+
+#[test]
+fn empty_page_yields_nothing() {
+    assert!(find(&[], &variants("Jane Doe", &[])).is_empty());
+}

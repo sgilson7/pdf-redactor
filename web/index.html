@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Redactor</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>PDF&nbsp;Redactor</h1>
+  <p class="privacy">Runs entirely in your browser. Nothing is uploaded.</p>
+</header>
+
+<section id="drop" class="drop">
+  <div class="drop-inner">
+    <strong>Drop a PDF here</strong>
+    <span>or</span>
+    <label class="btn">Choose file<input type="file" id="file" accept="application/pdf" hidden></label>
+    <p class="hint">Your file never leaves this machine — there is no server to send it to.</p>
+  </div>
+</section>
+
+<main id="app" hidden>
+  <div class="toolbar">
+    <label class="field">
+      <span>Name to redact</span>
+      <input type="text" id="name" placeholder="Jane Doe" autocomplete="off">
+    </label>
+    <label class="field">
+      <span>Other identifiers <em>(comma separated)</em></span>
+      <input type="text" id="extras" placeholder="jdoe2, jdoe2@ncsu.edu" autocomplete="off">
+    </label>
+    <button id="scan" class="btn primary">Find</button>
+    <div class="spacer"></div>
+    <label class="field small">
+      <span>Quality</span>
+      <select id="dpi">
+        <option value="150">150 DPI</option>
+        <option value="200" selected>200 DPI</option>
+        <option value="300">300 DPI</option>
+      </select>
+    </label>
+    <label class="check" title="Adds an invisible text layer so the output stays searchable. Redacted text is filtered out before it is written.">
+      <input type="checkbox" id="textlayer" checked><span>Searchable</span>
+    </label>
+    <button id="export" class="btn primary" disabled>Export</button>
+  </div>
+
+  <div class="body">
+    <nav id="rail" class="rail"></nav>
+
+    <div class="stage">
+      <div id="banner" class="banner" hidden></div>
+      <div id="wrap" class="wrap">
+        <canvas id="canvas"></canvas>
+        <div id="overlay" class="overlay"></div>
+      </div>
+      <p class="stagehint">Drag on the page to add a redaction by hand. Click a box to remove it.</p>
+    </div>
+
+    <aside class="side">
+      <div class="sidehead">
+        <h2>Redactions</h2>
+        <span id="count" class="count"></span>
+      </div>
+      <div id="list" class="list">
+        <p class="empty">Enter a name and press <strong>Find</strong>.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<div id="modal" class="modal" hidden>
+  <div class="sheet">
+    <h2 id="mtitle">Verification</h2>
+    <div id="mbody"></div>
+    <div class="mactions">
+      <button id="mclose" class="btn">Back</button>
+      <a id="mdownload" class="btn primary" download>Download</a>
+    </div>
+  </div>
+</div>
+
+<div id="busy" class="busy" hidden><div class="spinner"></div><span id="busytext">Working…</span></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

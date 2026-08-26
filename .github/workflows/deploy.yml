@@ -1,0 +1,65 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: the job needs to read the repo and mint a Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; a superseded run is cancelled rather than queued.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # wasm-bindgen-cli must match the wasm-bindgen crate exactly or the
+      # generated glue will not match the module. Read the version out of the
+      # lockfile so a `cargo update` can never silently desync the two.
+      - name: Resolve pinned wasm-bindgen version
+        id: wb
+        run: |
+          V=$(awk '/^name = "wasm-bindgen"$/{f=1} f&&/^version = /{gsub(/"/,"");print $3;exit}' Cargo.lock)
+          echo "Using wasm-bindgen $V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
+
+      # The redaction engine is browser-free, so it is fully tested here.
+      # A failure stops the deploy rather than shipping a broken guarantee.
+      - name: Test the redaction engine
+        run: cargo test --workspace --locked
+
+      - name: Build the site
+        run: ./packaging/package-web.sh
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
