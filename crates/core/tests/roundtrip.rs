@@ -139,3 +139,30 @@ fn multi_page_documents_build() {
     assert!(String::from_utf8_lossy(&pdf).contains("/Count 3"));
     assert_eq!(String::from_utf8_lossy(&pdf).matches("%%EOF").count(), 1);
 }
+
+/// Regression: the UI passes terms exactly as the user saw them on screen,
+/// which are mixed-case, while the document text is folded to lowercase before
+/// comparison. Comparing the two raw silently matched nothing, so every leak
+/// check passed. Verification must fold its own inputs.
+#[test]
+fn verification_is_case_insensitive_about_its_inputs() {
+    let items = submission();
+    let spans = filter_spans(&items, &[], PAGE_H);
+    let pdf = build(&[Page {
+        jpeg: jpeg(), px_w: 1700, px_h: 2200, pt_w: PAGE_W, pt_h: PAGE_H, spans,
+    }]);
+
+    // Raw display casing, as app.js sends it - not pre-normalized.
+    let report = verify(&pdf, &["Jane Doe".to_string()], &[], 1, 0);
+    assert!(
+        !report.passed(),
+        "a mixed-case approved term must still be detected as a leak"
+    );
+
+    // And the advisory path folds too.
+    let report = verify(&pdf, &[], &["Jane".to_string()], 1, 0);
+    assert!(
+        report.advisories().iter().any(|f| matches!(f, Finding::Residual { .. })),
+        "mixed-case declined term produced no advisory: {:?}", report.findings
+    );
+}

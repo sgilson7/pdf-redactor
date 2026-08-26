@@ -142,24 +142,36 @@ pub fn verify(
     let literals = normalize_term(&extract_literals(pdf));
     let raw = normalize_term(&hay);
 
-    for term in approved {
-        if term.chars().count() < 3 {
-            continue; // too short to be evidence of anything
-        }
-        if literals.contains(term) {
-            findings.push(Finding::Leak { term: term.clone(), where_: "text layer" });
-        } else if raw.contains(term) {
-            findings.push(Finding::Leak { term: term.clone(), where_: "raw bytes" });
+    // Normalize the incoming terms too. Callers legitimately pass whatever the
+    // user saw on screen ("Jane Doe"), while both haystacks are folded to
+    // lowercase - so comparing them raw silently matches nothing and every
+    // check passes. Folding here makes the function correct for any caller
+    // rather than depending on one to pre-normalize.
+    let fold = |terms: &[String]| -> Vec<(String, String)> {
+        terms
+            .iter()
+            .map(|t| (t.clone(), normalize_term(t)))
+            .filter(|(_, n)| n.chars().count() >= 3)
+            .collect()
+    };
+    let approved_n = fold(approved);
+    let declined_n = fold(declined);
+
+    for (shown, term) in &approved_n {
+        if literals.contains(term.as_str()) {
+            findings.push(Finding::Leak { term: shown.clone(), where_: "text layer" });
+        } else if raw.contains(term.as_str()) {
+            findings.push(Finding::Leak { term: shown.clone(), where_: "raw bytes" });
         }
     }
 
-    for term in declined {
-        if term.chars().count() < 3 || approved.contains(term) {
+    for (shown, term) in &declined_n {
+        if approved_n.iter().any(|(_, a)| a == term) {
             continue;
         }
         let count = literals.matches(term.as_str()).count();
         if count > 0 {
-            findings.push(Finding::Residual { term: term.clone(), count });
+            findings.push(Finding::Residual { term: shown.clone(), count });
         }
     }
 

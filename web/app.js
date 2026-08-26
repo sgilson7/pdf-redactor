@@ -28,6 +28,7 @@ const state = {
   cur: 0,
   scale: 1,
   terms: { approved: [], declined: [] },
+  scanned: false,
 };
 
 // ---------------------------------------------------------------- loading
@@ -68,6 +69,7 @@ async function open(file) {
     state.pages = [];
     state.hits = [];
     state.manual = [];
+    state.scanned = false;
 
     for (let p = 1; p <= state.doc.numPages; p++) {
       busy(`Reading page ${p} of ${state.doc.numPages}…`);
@@ -143,6 +145,7 @@ function scan() {
       });
     }
   }
+  state.scanned = true;
   renderList();
   renderBoxes();
   $('export').disabled = false;
@@ -293,7 +296,17 @@ function renderList() {
   $('count').textContent = `${onCount} of ${state.hits.length + state.manual.length}`;
 
   if (!sorted.length && !state.manual.length) {
-    list.innerHTML = '<p class="empty">Enter a name and press <strong>Find</strong>.</p>';
+    // Distinguish "not searched yet" from "searched and found nothing" — on an
+    // image-only document the second is expected, and saying nothing about it
+    // reads as though the tool simply had not run.
+    const anyText = state.pages.some((p) => !p.noText);
+    list.innerHTML = !state.scanned
+      ? '<p class="empty">Enter a name and press <strong>Find</strong>.</p>'
+      : anyText
+        ? '<p class="empty">No matches found. Check the spelling, add other ' +
+          'identifiers, or draw boxes by hand on the page.</p>'
+        : '<p class="empty">This document has no text layer anywhere, so there ' +
+          'is nothing to search. Drag on the page to redact by hand.</p>';
     return;
   }
 

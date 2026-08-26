@@ -193,7 +193,7 @@ pub fn build(pages: &[Page]) -> Vec<u8> {
             // extraction and selection but paint nothing.
             c.extend_from_slice(b"BT\n3 Tr\n");
             for s in &page.spans {
-                let natural = helvetica_width(&s.text) * s.size;
+                let natural = crate::metrics::width(&s.text) * s.size;
                 let scale = if natural > 0.0 {
                     (s.width / natural * 100.0).clamp(1.0, 1000.0)
                 } else {
@@ -231,22 +231,3 @@ pub fn build(pages: &[Page]) -> Vec<u8> {
     w.buf
 }
 
-/// Helvetica advance widths, in units of 1/1000 em, for the WinAnsi range we
-/// can actually encode. Used only to scale invisible text so selection
-/// rectangles roughly match the visible glyphs underneath.
-fn helvetica_width(s: &str) -> f32 {
-    const W: [u16; 95] = [
-        278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556,
-        556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722,
-        722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722,
-        667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556,
-        556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500,
-        500, 334, 260, 334, 584,
-    ];
-    s.chars()
-        .map(|c| {
-            let i = c as usize;
-            if (32..127).contains(&i) { W[i - 32] as f32 / 1000.0 } else { 0.556 }
-        })
-        .sum()
-}

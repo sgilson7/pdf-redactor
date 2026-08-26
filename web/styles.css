@@ -4,6 +4,12 @@
   --low: #5c6478; --danger: #ff6b6b; --ok: #4ec9a0;
 }
 * { box-sizing: border-box; }
+
+/* The `hidden` attribute works through the UA stylesheet's `[hidden]{display:none}`,
+   which ANY author-level `display:` rule outranks. Several panels below set
+   `display: grid`/`flex`, so without this they ignore `hidden` entirely and all
+   render stacked on load. Author-level and !important so it always wins. */
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
   font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
 body { display: flex; flex-direction: column; }

@@ -1,3 +1,7 @@
 /target
 /dist
 .DS_Store
+.venv-test
+testing/shots
+testing/out
+testing/fixtures

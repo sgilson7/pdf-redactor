@@ -245,15 +245,15 @@ fn build(
     let mut boxes = Vec::new();
     for (idx, first, last) in spans {
         let it = &items[idx];
-        let n = it.text.chars().count();
-        if n == 0 || it.w <= 0.0 {
+        if it.text.is_empty() || it.w <= 0.0 {
             continue;
         }
-        // Interpolate across the fragment's advance width. Proportional fonts
-        // make this approximate, which is what PAD absorbs.
-        let cw = it.w / n as f32;
-        let x0 = it.x + cw * first as f32;
-        let x1 = it.x + cw * (last + 1) as f32;
+        // Interpolate across the fragment using per-character advances rather
+        // than dividing evenly, or a prefix of narrow glyphs pushes the box
+        // right and leaves the first character of the match showing.
+        let chars: Vec<char> = it.text.chars().collect();
+        let x0 = it.x + it.w * crate::metrics::fraction_at(&chars, first);
+        let x1 = it.x + it.w * crate::metrics::fraction_at(&chars, last + 1);
         boxes.push(Rect {
             x: x0 - PAD,
             y: it.y - PAD,

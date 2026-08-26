@@ -34,8 +34,10 @@ pub fn filter_spans(items: &[TextItem], boxes: &[Rect], page_h: f32) -> Vec<Text
         if n == 0 || it.w <= 0.0 {
             continue;
         }
-        let cw = it.w / n as f32;
         let chars: Vec<char> = it.text.chars().collect();
+        // Same metric-aware interpolation the boxes use, so a character is
+        // dropped exactly when the box that covers it says so.
+        let at = |i: usize| it.x + it.w * crate::metrics::fraction_at(&chars, i);
 
         // Walk the fragment, accumulating runs of surviving characters.
         let mut run: Option<(usize, usize)> = None;
@@ -45,8 +47,8 @@ pub fn filter_spans(items: &[TextItem], boxes: &[Rect], page_h: f32) -> Vec<Text
                 if text.trim().is_empty() {
                     return;
                 }
-                let x = it.x + cw * s as f32;
-                let w = cw * (e - s) as f32;
+                let x = at(s);
+                let w = at(e) - x;
                 // `y` is the top of the line box and `h` the font height, so the
                 // baseline sits exactly at `y + h` in viewport space (the JS
                 // side derives both from the same pdf.js transform). Flip that
@@ -63,8 +65,8 @@ pub fn filter_spans(items: &[TextItem], boxes: &[Rect], page_h: f32) -> Vec<Text
         };
 
         for i in 0..n {
-            let x0 = it.x + cw * i as f32;
-            if covered(x0, x0 + cw, it, boxes) {
+            let (x0, x1) = (at(i), at(i + 1));
+            if covered(x0, x1, it, boxes) {
                 flush(&mut run, &mut out);
             } else {
                 run = Some(match run {

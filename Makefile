@@ -1,10 +1,21 @@
 ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-.PHONY: help test web serve deploy clean
+.PHONY: help test test-ui test-ui-setup web serve deploy clean
 
 ## test: run the engine test suite (native, no browser needed)
 test:
 	@cargo test --workspace
+
+## test-ui: drive the built app in a real browser and verify exports
+test-ui:
+	@$(ROOT)/testing/run.sh
+
+## test-ui-setup: one-time install of headless Chromium for test-ui
+test-ui-setup:
+	@python3 -m venv $(ROOT)/.venv-test
+	@$(ROOT)/.venv-test/bin/pip -q install playwright pillow
+	@$(ROOT)/.venv-test/bin/playwright install chromium
+	@echo "ready: make test-ui"
 
 ## web: build the browser app into dist/web/
 web:

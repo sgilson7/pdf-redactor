@@ -94,6 +94,18 @@ Being clear about this matters more than the feature list.
   is handled correctly. A misplaced box is visible during review and can be
   deleted and redrawn.
 
+## A note on Gemini chatlogs
+
+Chat transcripts differ from homework in a way that matters for review. The
+model addresses the student by first name throughout — *"Of course, Jane!"* — so
+the bare first name is genuinely identifying there, and the Medium
+**first name only** hit is usually worth checking. On a worksheet the same hit
+is usually worth leaving alone, because *"Jane has 5 apples"* is the question.
+
+Chrome's print-to-PDF also renders the account display name and the avatar
+initial from the Gemini UI. The display name is normally real text and gets
+found; the avatar circle may be pixels, and needs a manual box.
+
 ## Verification
 
 Every export re-opens the finished document and checks it, and the report
@@ -112,9 +124,11 @@ Requires Rust and the wasm target. No node, npm, or bundler.
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version "$(awk '/^name = "wasm-bindgen"$/{f=1} f&&/^version = /{gsub(/"/,"");print $3;exit}' Cargo.lock)"
 
-make test     # run the engine test suite (native, no browser)
-make serve    # build and open at localhost:8080
-make deploy   # push; Actions builds, tests, and publishes to Pages
+make test           # engine test suite (native, no browser)
+make test-ui-setup  # one-time: headless Chromium for browser tests
+make test-ui        # drive the real UI, screenshot it, verify exports
+make serve          # build and open at localhost:8080
+make deploy         # push; Actions builds, tests, and publishes to Pages
 ```
 
 ## Layout
