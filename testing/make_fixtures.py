@@ -89,6 +89,19 @@ if __name__ == "__main__":
         "        count += 1",
     ], title="Gemini - Jane Doe")
 
+    # Reproduces two failure modes seen on a real document: a name at the start
+    # of a wrapped line (producers often omit the EOL flag, which used to glue
+    # it to the previous word and lose the match entirely), and the name as a
+    # substring of a longer word, which must be left alone but reported.
+    text_pdf(OUT / "wrapped.pdf", [
+        "CSC 116 - Lab 3",
+        "This assignment was submitted by",
+        "Jane Doe on March 3rd of this year.",
+        "See the Janedoexyz compound which is a different word.",
+        "Contact provision.sh",
+        "Jane again on the next line.",
+    ], title="wrapped")
+
     image_pdf(OUT / "scanned.pdf", [
         ["CSC 116 Worksheet", "Name: Jane Doe", "", "1) x = 5", "2) y = 10"],
         ["Page 2", "Jane Doe - continued", "3) print(x + y)"],

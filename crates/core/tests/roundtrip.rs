@@ -223,3 +223,49 @@ fn smart_punctuation_becomes_searchable_ascii() {
     assert!(text.contains("\"quote\""), "quotes lost: {:?}", text);
     assert!(text.contains("- yes..."), "dash/ellipsis lost: {:?}", text);
 }
+
+/// Regression: the verifier must apply the same word-boundary rule the matcher
+/// applies. Redacting "Docker" in a document that also says "Dockerfile" left
+/// the longer word alone - correctly - but a substring-based verifier called
+/// that a leak and blocked the download of a correctly redacted file.
+#[test]
+fn a_term_inside_a_longer_word_is_not_a_leak() {
+    let items: Vec<TextItem> = ["Install Docker first.", "Then edit the Dockerfile."]
+        .iter()
+        .enumerate()
+        .map(|(i, t)| TextItem {
+            text: (*t).into(),
+            x: 54.0,
+            y: 100.0 + i as f32 * 20.0,
+            w: t.chars().count() as f32 * 5.5,
+            h: 12.0,
+            eol: true,
+        })
+        .collect();
+
+    let vars = variants("Docker", &[]);
+    let hits = find(&items, &vars);
+
+    // The matcher must find the standalone word and skip the longer one.
+    assert_eq!(hits.len(), 1, "expected only the standalone word: {:?}",
+        hits.iter().map(|h| &h.matched).collect::<Vec<_>>());
+
+    let boxes = merge_boxes(hits.iter().flat_map(|m| m.boxes.clone()).collect());
+    let pdf = build(&[Page {
+        jpeg: jpeg(), px_w: 1700, px_h: 2200, pt_w: PAGE_W, pt_h: PAGE_H,
+        spans: filter_spans(&items, &boxes, PAGE_H),
+    }]);
+
+    let report = verify(&pdf, &["Docker".to_string()], &[], 1, boxes.len());
+    assert!(report.passed(), "\"Dockerfile\" wrongly reported: {:?}", report.blocking());
+
+    // But it is surfaced, not silently ignored.
+    assert!(
+        report.advisories().iter().any(|f| matches!(f, Finding::PartialWord { .. })),
+        "substring occurrence not reported at all: {:?}", report.findings
+    );
+
+    // The longer word genuinely survives in the searchable layer.
+    let text = extract_literals(&redactor_core::verify::views(&pdf).content);
+    assert!(text.contains("Dockerfile"), "longer word lost: {:?}", text);
+}

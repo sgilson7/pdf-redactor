@@ -23,6 +23,11 @@ pub enum Finding {
     /// or redacting everything. It is still worth saying out loud at export
     /// time, so the choice stays deliberate rather than forgotten.
     Residual { term: String, count: usize },
+    /// The term occurs only *inside* longer words, e.g. "Docker" within
+    /// "Dockerfile". Matching deliberately requires word boundaries, so these
+    /// were never redacted. Reported rather than ignored: whether a substring
+    /// hit matters is a judgement only the reader can make.
+    PartialWord { term: String, count: usize },
     /// More than one revision, i.e. incremental-update history is present.
     MultipleRevisions(usize),
 }
@@ -30,7 +35,7 @@ pub enum Finding {
 impl Finding {
     /// Blocking findings stop the download; advisory ones are reported.
     pub fn is_blocking(&self) -> bool {
-        !matches!(self, Finding::Residual { .. })
+        !matches!(self, Finding::Residual { .. } | Finding::PartialWord { .. })
     }
 }
 
@@ -65,6 +70,38 @@ const FORBIDDEN: &[&str] = &[
     "/PieceInfo", "/Names", "/Producer", "/Creator", "/Author", "/CreationDate",
     "/ModDate", "/GoToR", "/Launch", "/URI",
 ];
+
+/// Count occurrences of `needle` in `hay` that sit on word boundaries, plus
+/// those that occur only inside a longer word.
+///
+/// Verification has to apply exactly the rule the matcher applied. The matcher
+/// requires boundaries, so "Docker" never redacts the "Docker" inside
+/// "Dockerfile" - and a verifier using plain substring containment then reports
+/// a leak in a document that was redacted correctly, blocking a download it
+/// should have allowed.
+fn count_occurrences(hay: &[char], needle: &[char]) -> (usize, usize) {
+    let (mut whole, mut partial) = (0, 0);
+    if needle.is_empty() || needle.len() > hay.len() {
+        return (0, 0);
+    }
+    let mut i = 0;
+    while i + needle.len() <= hay.len() {
+        if hay[i..i + needle.len()] == *needle {
+            let end = i + needle.len();
+            let before = i == 0 || !hay[i - 1].is_alphanumeric();
+            let after = end >= hay.len() || !hay[end].is_alphanumeric();
+            if before && after {
+                whole += 1;
+            } else {
+                partial += 1;
+            }
+            i = end;
+            continue;
+        }
+        i += 1;
+    }
+    (whole, partial)
+}
 
 /// Find `needle` in `hay`.
 fn find_at(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -257,11 +294,21 @@ pub fn verify(
     let approved_n = fold(approved);
     let declined_n = fold(declined);
 
+    // Compare over chars once rather than per term.
+    let lit: Vec<char> = literals.chars().collect();
+    let raw_c: Vec<char> = raw.chars().collect();
+
+    let mut partials: Vec<(String, usize)> = Vec::new();
     for (shown, term) in &approved_n {
-        if literals.contains(term.as_str()) {
+        let n: Vec<char> = term.chars().collect();
+        let (whole_lit, part_lit) = count_occurrences(&lit, &n);
+        if whole_lit > 0 {
             findings.push(Finding::Leak { term: shown.clone(), where_: "text layer" });
-        } else if raw.contains(term.as_str()) {
+        } else if count_occurrences(&raw_c, &n).0 > 0 {
             findings.push(Finding::Leak { term: shown.clone(), where_: "raw bytes" });
+        }
+        if part_lit > 0 {
+            partials.push((shown.clone(), part_lit));
         }
     }
 
@@ -269,10 +316,19 @@ pub fn verify(
         if approved_n.iter().any(|(_, a)| a == term) {
             continue;
         }
-        let count = literals.matches(term.as_str()).count();
-        if count > 0 {
-            findings.push(Finding::Residual { term: shown.clone(), count });
+        let n: Vec<char> = term.chars().collect();
+        let (whole, _) = count_occurrences(&lit, &n);
+        if whole > 0 {
+            findings.push(Finding::Residual { term: shown.clone(), count: whole });
         }
+    }
+
+    // Collapse per-variant partials: several approved forms of one name
+    // ("Docker", "docker") otherwise each report the same longer words.
+    partials.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    partials.dedup_by(|a, b| a.0.eq_ignore_ascii_case(&b.0));
+    for (term, count) in partials {
+        findings.push(Finding::PartialWord { term, count });
     }
 
     Report { findings, pages, redactions, bytes: pdf.len() }

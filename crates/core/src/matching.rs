@@ -76,7 +76,17 @@ fn join(items: &[TextItem]) -> (String, Vec<(usize, usize)>) {
 
     for (i, it) in items.iter().enumerate() {
         if let Some(p) = prev {
-            if p.eol {
+            // Producers do not reliably set `hasEOL`, so a line break has to be
+            // recognised from geometry as well: the baseline moves, or the next
+            // fragment starts back at the left margin. Without this the last
+            // word of one line is glued to the first of the next
+            // ("provision.sh" + "docker" -> "shdocker"), and the joined word
+            // then fails the word-boundary test, so the match is missed
+            // entirely. A negative gap is exactly what a wrap looks like, which
+            // is why gap alone cannot be the test.
+            let moved_line = (it.y - p.y).abs() > p.h * 0.5;
+            let carriage_return = it.x + p.h * 0.5 < p.x + p.w;
+            if p.eol || moved_line || carriage_return {
                 text.push('\n');
                 map.push((i, 0));
             } else {

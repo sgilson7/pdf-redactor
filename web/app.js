@@ -502,8 +502,9 @@ async function doExport() {
 }
 
 function showReport(report, pdf) {
-  const blocking = report.findings.filter((f) => !('Residual' in f));
+  const blocking = report.findings.filter((f) => !('Residual' in f) && !('PartialWord' in f));
   const residual = report.findings.filter((f) => 'Residual' in f);
+  const partial = report.findings.filter((f) => 'PartialWord' in f);
   const ok = blocking.length === 0;
 
   const rows = [];
@@ -536,6 +537,11 @@ function showReport(report, pdf) {
   for (const f of residual) {
     row('warn', '⚠', `“${f.Residual.term}” appears ${f.Residual.count}× in the output — ` +
         `you chose not to redact it`);
+  }
+  for (const f of partial) {
+    row('warn', '⚠', `“${f.PartialWord.term}” also appears inside ${f.PartialWord.count} ` +
+        `longer word${f.PartialWord.count === 1 ? '' : 's'} (e.g. a filename or compound) — ` +
+        `matching only redacts whole words, so those were left alone`);
   }
 
   row('ok', 'ℹ', `Output is ${(report.bytes / 1024 / 1024).toFixed(2)} MB`);

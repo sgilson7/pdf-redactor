@@ -20,6 +20,7 @@ run() { echo; echo "── $1 ────────────────�
 
 run "typed homework"  --tag homework --pdf homework.pdf --export
 run "gemini chatlog"  --tag chatlog  --pdf chatlog.pdf  --export
+run "wrapped lines"   --tag wrapped  --pdf wrapped.pdf  --extras "" --export
 run "image-only scan" --tag scanned  --pdf scanned.pdf  --extras "" --expect-none --draw --export
 
 echo

@@ -146,3 +146,44 @@ fn typo_is_found_at_low_tier_only() {
 fn empty_page_yields_nothing() {
     assert!(find(&[], &variants("Jane Doe", &[])).is_empty());
 }
+
+/// A wrapped line whose fragments carry no EOL flag must not glue the last word
+/// of one line to the first of the next. Real documents do this constantly, and
+/// the glued word then fails the word-boundary test so the match is lost.
+#[test]
+fn a_wrapped_line_does_not_glue_words_together() {
+    let items = vec![
+        TextItem { text: "a directory containing provision.sh".into(),
+                   x: 54.0, y: 100.0, w: 190.0, h: 12.0, eol: false },
+        // Next line: back at the left margin, lower down, and NOT flagged eol.
+        TextItem { text: "docker build -t csc584-env .".into(),
+                   x: 54.0, y: 116.0, w: 150.0, h: 12.0, eol: false },
+    ];
+    let h = hits(&items, "Docker");
+    assert!(
+        h.iter().any(|(m, _)| m.eq_ignore_ascii_case("docker")),
+        "word after a wrap was missed: {:?}", h
+    );
+}
+
+/// The same, for a person's name split by the wrap.
+#[test]
+fn a_name_at_the_start_of_a_wrapped_line_is_found() {
+    let items = vec![
+        TextItem { text: "This assignment was submitted by".into(),
+                   x: 54.0, y: 100.0, w: 170.0, h: 12.0, eol: false },
+        TextItem { text: "Jane Doe on March 3.".into(),
+                   x: 54.0, y: 116.0, w: 110.0, h: 12.0, eol: false },
+    ];
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(_, t)| *t == Tier::High),
+        "name after a wrap was missed entirely: {:?}", h);
+}
+
+/// The fix must not break mid-word fragmentation on a single line.
+#[test]
+fn same_line_fragments_still_join_without_a_break() {
+    let items = line(&[("Name:", 0.0), ("Ja", 6.0), ("ne D", 0.0), ("oe", 0.0)]);
+    let h = hits(&items, "Jane Doe");
+    assert!(h.iter().any(|(_, t)| *t == Tier::High), "{:?}", h);
+}

@@ -66,6 +66,11 @@ entirely. Normalisation folds case, strips diacritics (`José` ≡ `Jose`), expa
 ligatures, removes zero-width characters, and rejoins words hyphenated across a
 line break (`Jo-\nhnson`).
 
+Matching requires **whole words**: redacting `Docker` leaves `Dockerfile`
+alone, and a student named Kim is not redacted out of `Kimberly`. Substring
+occurrences are counted and reported at export so the choice is visible rather
+than silent.
+
 Hits are tiered, and **only high-confidence hits are pre-checked**:
 
 | Tier | Pre-checked | Examples for *Jane Doe* |
