@@ -114,6 +114,19 @@ Chrome's print-to-PDF also renders the account display name and the avatar
 initial from the Gemini UI. The display name is normally real text and gets
 found; the avatar circle may be pixels, and needs a manual box.
 
+## Build version
+
+The build id shown in the top-right corner identifies exactly which version is
+running. Quote it when reporting a bug.
+
+Every internal asset URL carries that hash, because GitHub Pages serves with
+`Cache-Control: max-age=600` and a reload inside that window would otherwise
+keep using the previous `app.js` and `.wasm` from disk cache — which reads as a
+fix that failed to deploy, and can leave a browser mixing a fresh script with a
+stale module. A changed build is a different URL, so a stale copy can never be
+served for it. `index.html` itself can still lag by up to ten minutes; a hard
+reload (Cmd-Shift-R) skips the wait.
+
 ## Verification
 
 Every export re-opens the finished document and checks it, and the report

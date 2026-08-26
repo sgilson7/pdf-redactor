@@ -46,9 +46,29 @@ if command -v wasm-opt >/dev/null; then
   wasm-opt -Oz -o "$WEB/pkg/${WASM}_bg.wasm" "$WEB/pkg/${WASM}_bg.wasm"
 fi
 
+# --- cache busting -----------------------------------------------------------
+# GitHub Pages serves everything with `Cache-Control: max-age=600`, so for ten
+# minutes after a deploy a reload keeps using the previous app.js and .wasm from
+# disk cache. That reads as "the fix did not deploy", and worse, a browser can
+# mix a fresh script with a stale module. Stamping the content hash into every
+# internal asset URL means a changed build is simply a different URL, so a
+# stale copy can never be served for it.
+say "Stamping build version"
+BUILD=$(cat "$WEB/app.js" "$WEB/pkg/$WASM.js" "$WEB/pkg/${WASM}_bg.wasm" \
+        | shasum -a 256 | cut -c1-8)
+
+# app.js -> pkg/redactor_wasm.js -> redactor_wasm_bg.wasm: every hop needs it,
+# because the browser caches each URL independently.
+sed -i '' "s|from './pkg/$WASM.js'|from './pkg/$WASM.js?v=$BUILD'|" "$WEB/app.js"
+sed -i '' "s|new URL('${WASM}_bg.wasm', import.meta.url)|new URL('${WASM}_bg.wasm?v=$BUILD', import.meta.url)|" \
+  "$WEB/pkg/$WASM.js"
+sed -i '' "s|src=\"app.js\"|src=\"app.js?v=$BUILD\"|; s|href=\"styles.css\"|href=\"styles.css?v=$BUILD\"|" \
+  "$WEB/index.html"
+sed -i '' "s|__BUILD__|$BUILD|" "$WEB/index.html"
+
 # Jekyll would otherwise skip the pkg/ directory and mangle assets.
 touch "$WEB/.nojekyll"
 
-say "Done: $WEB"
+say "Done: $WEB (build $BUILD)"
 du -sh "$WEB" | sed 's/^/    /'
 ls -la "$WEB/pkg/${WASM}_bg.wasm" | awk '{printf "    wasm: %.0f KB\n", $5/1024}'
