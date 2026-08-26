@@ -113,6 +113,15 @@ fn escape(s: &str) -> Vec<u8> {
             '\\' => out.extend_from_slice(b"\\\\"),
             // Printable ASCII is identical in WinAnsi.
             c if (' '..='~').contains(&c) => out.push(c as u8),
+            // Typographic punctuation does not decompose under NFKD, so without
+            // this it becomes a space and "didn't" reads as "didn t" - which
+            // quietly breaks searching the anonymised corpus for ordinary words.
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{2032}' => out.push(b'\''),
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{2033}' => out.push(b'"'),
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => out.push(b'-'),
+            '\u{2026}' => out.extend_from_slice(b"..."),
+            '\u{2022}' | '\u{00B7}' => out.push(b'*'),
+            '\u{00A0}' | '\u{2007}' | '\u{202F}' | '\u{2009}' => out.push(b' '),
             _ => out.push(b' '),
         }
     }

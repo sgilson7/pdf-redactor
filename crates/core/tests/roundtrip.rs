@@ -166,3 +166,60 @@ fn verification_is_case_insensitive_about_its_inputs() {
         "mixed-case declined term produced no advisory: {:?}", report.findings
     );
 }
+
+/// Regression: image payloads must be excluded from every check.
+///
+/// A JPEG is effectively random bytes, so short structural tokens turn up in
+/// one by chance - a 125-page document produced a bogus "/JS" finding and
+/// blocked its own download. Normalizing that much binary also allocates
+/// gigabytes and aborts the module outright.
+#[test]
+fn image_payloads_are_never_scanned() {
+    // A payload that would trip every check if it were inspected.
+    let mut fake = b"\xFF\xD8\xFF\xE0 /JS /Info /Annots Jane Doe jdoe2 %%EOF ".to_vec();
+    fake.extend_from_slice(&vec![0x5Au8; 4096]);
+
+    // Redact properly, so anything the verifier finds came from the image.
+    let items = submission();
+    let vars = variants("Jane Doe", &[]);
+    let boxes = merge_boxes(
+        find(&items, &vars)
+            .iter()
+            .filter(|m| m.tier == Tier::High)
+            .flat_map(|m| m.boxes.clone())
+            .collect(),
+    );
+    let pdf = build(&[Page {
+        jpeg: fake,
+        px_w: 10, px_h: 10, pt_w: PAGE_W, pt_h: PAGE_H,
+        spans: filter_spans(&items, &boxes, PAGE_H),
+    }]);
+
+    let report = verify(&pdf, &["Jane Doe".to_string()], &[], 1, 0);
+    assert!(
+        report.passed(),
+        "image bytes leaked into the checks: {:?}", report.blocking()
+    );
+
+    // And the split still finds the real content: the text layer is intact.
+    let text = extract_literals(&redactor_core::verify::views(&pdf).content);
+    assert!(text.contains("CSC 116"), "content stream lost: {:?}", text);
+}
+
+/// Typographic punctuation must survive into the text layer as its ASCII
+/// equivalent. Dropping a curly apostrophe to a space turns "didn't" into
+/// "didn t", which breaks ordinary word search across an anonymised corpus.
+#[test]
+fn smart_punctuation_becomes_searchable_ascii() {
+    let spans = vec![redactor_core::pdfwrite::TextSpan {
+        text: "they didn\u{2019}t \u{201C}quote\u{201D} \u{2014} yes\u{2026}".into(),
+        x: 50.0, y: 700.0, size: 12.0, width: 200.0,
+    }];
+    let pdf = build(&[Page {
+        jpeg: jpeg(), px_w: 1700, px_h: 2200, pt_w: PAGE_W, pt_h: PAGE_H, spans,
+    }]);
+    let text = extract_literals(&redactor_core::verify::views(&pdf).content);
+    assert!(text.contains("didn't"), "apostrophe lost: {:?}", text);
+    assert!(text.contains("\"quote\""), "quotes lost: {:?}", text);
+    assert!(text.contains("- yes..."), "dash/ellipsis lost: {:?}", text);
+}

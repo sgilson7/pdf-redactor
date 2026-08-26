@@ -11,4 +11,6 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Deliberately NOT panic = "abort": that compiles panics down to a bare
+# `unreachable`, so a failure surfaces in the browser as
+# "Unreachable code should not be executed" with no indication of what broke.

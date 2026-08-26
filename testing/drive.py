@@ -32,6 +32,8 @@ def main():
     ap.add_argument("--export", action="store_true")
     ap.add_argument("--expect-none", action="store_true",
                     help="image-only documents have nothing to search")
+    ap.add_argument("--pager", action="store_true",
+                    help="exercise page navigation")
     ap.add_argument("--draw", action="store_true",
                     help="drag a manual redaction box on page 1")
     ap.add_argument("--headed", action="store_true")
@@ -77,9 +79,12 @@ def main():
         print(f"  landing visibility ok" if not problems else "  landing has problems")
 
         print(f"→ uploading {args.pdf}")
-        page.set_input_files("#file", str(FIX / args.pdf))
+        src = pathlib.Path(args.pdf)
+        if not src.is_absolute():
+            src = FIX / args.pdf
+        page.set_input_files("#file", str(src))
         page.wait_for_selector("#app:visible", timeout=15000)
-        page.wait_for_selector("#busy", state="hidden", timeout=30000)
+        page.wait_for_selector("#busy", state="hidden", timeout=180000)
         page.wait_for_timeout(600)
         shot("2-opened")
 
@@ -110,13 +115,45 @@ def main():
             ck = row.locator("input").is_checked() if row.locator("input").count() else False
             print(f"    [{'x' if ck else ' '}] {t:7} {m}")
 
+        if args.pager:
+            print("→ exercising the pager")
+            total = int(page.locator("#pagetotal").inner_text())
+            page.click("#next"); page.wait_for_timeout(350)
+            after_next = page.locator("#pageno").input_value()
+            page.click("#last"); page.wait_for_timeout(700)
+            at_last = page.locator("#pageno").input_value()
+            nxt_disabled = page.locator("#next").is_disabled()
+            page.fill("#pageno", "42"); page.press("#pageno", "Enter")
+            page.wait_for_timeout(600)
+            jumped = page.locator("#pageno").input_value()
+            # Blur the number field: arrow keys are ignored while typing.
+            page.evaluate("document.activeElement?.blur()")
+            page.keyboard.press("ArrowLeft"); page.wait_for_timeout(600)
+            after_key = page.locator("#pageno").input_value()
+            print(f"  total={total} next={after_next} last={at_last} "
+                  f"(next disabled: {nxt_disabled}) jump={jumped} arrowleft={after_key}")
+            for want, got, what in [("2", after_next, "next"), (str(total), at_last, "last"),
+                                    ("42", jumped, "jump"), ("41", after_key, "arrow key")]:
+                if want != got:
+                    problems.append(f"pager {what}: expected {want}, got {got}")
+            if not nxt_disabled:
+                problems.append("next not disabled on last page")
+            shot("3c-pager")
+
         if args.draw:
             print("→ drawing a manual box")
             ov = page.locator("#overlay")
+            ov.scroll_into_view_if_needed()
+            page.wait_for_timeout(250)
             box = ov.bounding_box()
-            page.mouse.move(box["x"] + 60, box["y"] + 100)
+            # A tall page can extend past the viewport, which puts a naive
+            # offset off-screen and the drag never lands.
+            vh = page.viewport_size["height"]
+            y = max(box["y"], 0) + min(100, max(40, (min(box["y"] + box["height"], vh)
+                                                      - max(box["y"], 0)) / 3))
+            page.mouse.move(box["x"] + 60, y)
             page.mouse.down()
-            page.mouse.move(box["x"] + 260, box["y"] + 130, steps=8)
+            page.mouse.move(box["x"] + 260, y + 30, steps=8)
             page.mouse.up()
             page.wait_for_timeout(400)
             drawn = page.locator("#overlay .rbox").count()
@@ -129,7 +166,7 @@ def main():
         if args.export:
             print("→ exporting")
             page.click("#export")
-            page.wait_for_selector("#modal:visible", timeout=60000)
+            page.wait_for_selector("#modal:visible", timeout=600000)
             page.wait_for_timeout(500)
             shot("4-report")
             print("  " + page.locator("#mtitle").inner_text())

@@ -45,18 +45,32 @@
       <input type="checkbox" id="textlayer" checked><span>Searchable</span>
     </label>
     <button id="export" class="btn primary" disabled>Export</button>
+    <span id="sizehint" class="sizehint"></span>
   </div>
 
   <div class="body">
     <nav id="rail" class="rail"></nav>
 
     <div class="stage">
+      <div class="pager">
+        <button id="first" class="btn" title="First page">⇤</button>
+        <button id="prev" class="btn" title="Previous page (←)">◀ Prev</button>
+        <span class="pageno">
+          <input type="number" id="pageno" min="1" value="1"> / <span id="pagetotal">1</span>
+        </span>
+        <button id="next" class="btn" title="Next page (→)">Next ▶</button>
+        <button id="last" class="btn" title="Last page">⇥</button>
+        <span id="jumpmark" class="jumpmark"></span>
+      </div>
+      <div class="pagearea">
       <div id="banner" class="banner" hidden></div>
       <div id="wrap" class="wrap">
         <canvas id="canvas"></canvas>
         <div id="overlay" class="overlay"></div>
       </div>
-      <p class="stagehint">Drag on the page to add a redaction by hand. Click a box to remove it.</p>
+      <p class="stagehint">Drag on the page to add a redaction by hand. Click a box to remove it.
+        Arrow keys change page.</p>
+      </div>
     </div>
 
     <aside class="side">

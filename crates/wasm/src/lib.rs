@@ -57,13 +57,15 @@ pub fn find_matches(items_json: &str, name: &str, extras_json: &str) -> Result<S
 pub struct Builder {
     pages: Vec<Page>,
     redactions: usize,
+    // Kept separately because `finish` drains `pages`.
+    count: usize,
 }
 
 #[wasm_bindgen]
 impl Builder {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Builder {
-        Builder { pages: Vec::new(), redactions: 0 }
+        Builder { pages: Vec::new(), redactions: 0, count: 0 }
     }
 
     /// Add one finished page.
@@ -92,19 +94,27 @@ impl Builder {
             Vec::new()
         };
         self.redactions += boxes.len();
+        self.count += 1;
         self.pages.push(Page { jpeg: jpeg.to_vec(), px_w, px_h, pt_w, pt_h, spans });
         Ok(())
     }
 
     /// Emit the finished document.
+    ///
+    /// Takes the pages rather than borrowing them, so the accumulated JPEGs are
+    /// released as soon as the output buffer exists. On a 125-page document
+    /// that is the difference between holding one copy and two.
     #[wasm_bindgen(js_name = finish)]
     pub fn finish(&mut self) -> Vec<u8> {
-        build(&self.pages)
+        let pages = std::mem::take(&mut self.pages);
+        let out = build(&pages);
+        drop(pages);
+        out
     }
 
     #[wasm_bindgen(getter, js_name = pageCount)]
     pub fn page_count(&self) -> usize {
-        self.pages.len()
+        self.count
     }
 
     #[wasm_bindgen(getter, js_name = redactionCount)]

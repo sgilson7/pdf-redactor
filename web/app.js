@@ -39,6 +39,22 @@ async function boot() {
   $('scan').onclick = scan;
   $('export').onclick = doExport;
   $('mclose').onclick = () => ($('modal').hidden = true);
+  $('first').onclick = () => show(0);
+  $('prev').onclick = () => show(state.cur - 1);
+  $('next').onclick = () => show(state.cur + 1);
+  $('last').onclick = () => show(state.pages.length - 1);
+  $('pageno').onchange = (e) => show(+e.target.value - 1);
+  $('dpi').onchange = updateSizeHint;
+
+  // Arrow keys page through, except while typing in a field.
+  document.addEventListener('keydown', (e) => {
+    if (!state.doc || $('modal').hidden === false) return;
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); show(state.cur + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(state.cur - 1); }
+    if (e.key === 'Home') { e.preventDefault(); show(0); }
+    if (e.key === 'End') { e.preventDefault(); show(state.pages.length - 1); }
+  });
   $('name').addEventListener('keydown', (e) => e.key === 'Enter' && scan());
 }
 
@@ -89,8 +105,9 @@ async function open(file) {
 
     $('drop').hidden = true;
     $('app').hidden = false;
-    await buildRail();
+    buildRail();
     await show(0);
+    updateSizeHint();
     $('name').focus();
   } catch (e) {
     alert(`Could not open that PDF.\n\n${e.message}`);
@@ -151,21 +168,35 @@ function scan() {
   $('export').disabled = false;
 }
 
+/// Rasterising is what makes the guarantee hold, but it also inflates a long
+/// document considerably. Say so before the user waits several minutes for a
+/// file they would rather have had at a lower setting.
+function updateSizeHint() {
+  const n = state.pages.length;
+  if (!n) { $('sizehint').textContent = ''; return; }
+  const perPageMB = { 150: 0.33, 200: 0.58, 300: 1.25 }[+$('dpi').value] ?? 0.58;
+  const est = n * perPageMB;
+  $('sizehint').textContent = n >= 25
+    ? `${n} pages · roughly ${est < 1 ? '<1' : Math.round(est)} MB out` +
+      (est > 40 ? ' — 150 DPI is much smaller' : '')
+    : '';
+}
+
 // ---------------------------------------------------------------- rendering
 
-async function buildRail() {
+/// Build the page rail with placeholders and fill them in as they scroll into
+/// view. Rendering all 125 thumbnails of a long document up front takes tens of
+/// seconds and blocks everything else; almost none of them are ever looked at.
+function buildRail() {
   const rail = $('rail');
   rail.innerHTML = '';
+  state.thumbDone = new Set();
+
   for (let p = 0; p < state.pages.length; p++) {
     const d = document.createElement('div');
-    d.className = 'thumb';
+    d.className = 'thumb pending';
+    d.dataset.page = p;
     d.onclick = () => show(p);
-    const c = document.createElement('canvas');
-    const page = await state.doc.getPage(p + 1);
-    const vp = page.getViewport({ scale: 96 / state.pages[p].w });
-    c.width = vp.width; c.height = vp.height;
-    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-    d.appendChild(c);
     const n = document.createElement('span');
     n.className = 'n'; n.textContent = p + 1;
     d.appendChild(n);
@@ -176,11 +207,45 @@ async function buildRail() {
     }
     rail.appendChild(d);
   }
+
+  state.thumbObserver?.disconnect();
+  state.thumbObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) drawThumb(+e.target.dataset.page);
+    }
+  }, { root: rail, rootMargin: '200px' });
+  for (const el of rail.children) state.thumbObserver.observe(el);
+}
+
+async function drawThumb(p) {
+  if (state.thumbDone.has(p)) return;
+  state.thumbDone.add(p);
+  const d = $('rail').children[p];
+  if (!d) return;
+  try {
+    const page = await state.doc.getPage(p + 1);
+    const vp = page.getViewport({ scale: 96 / state.pages[p].w });
+    const c = document.createElement('canvas');
+    c.width = vp.width; c.height = vp.height;
+    await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+    d.classList.remove('pending');
+    d.insertBefore(c, d.firstChild);
+  } catch {
+    state.thumbDone.delete(p);   // let it retry on the next scroll
+  }
 }
 
 async function show(idx) {
+  const n = state.pages.length;
+  if (!n) return;
+  idx = Math.max(0, Math.min(n - 1, idx));
   state.cur = idx;
-  [...$('rail').children].forEach((c, i) => c.classList.toggle('sel', i === idx));
+
+  const rail = $('rail');
+  [...rail.children].forEach((c, i) => c.classList.toggle('sel', i === idx));
+  rail.children[idx]?.scrollIntoView({ block: 'nearest' });
+  drawThumb(idx);
+  updatePager();
 
   const page = await state.doc.getPage(idx + 1);
   const avail = Math.min(900, window.innerWidth - 520);
@@ -223,6 +288,7 @@ function renderBoxes() {
     }));
   }
   attachDraw(ov);
+  updatePager();
 }
 
 function boxEl(b, s, onClick) {
@@ -274,6 +340,28 @@ function attachDraw(ov) {
     renderBoxes(); renderList();
     $('export').disabled = false;
   };
+}
+
+/// Keep the pager in step, and mark which pages carry redactions so a long
+/// document does not have to be paged through to find them.
+function updatePager() {
+  const n = state.pages.length;
+  $('pagetotal').textContent = n;
+  $('pageno').value = state.cur + 1;
+  $('pageno').max = n;
+  $('first').disabled = $('prev').disabled = state.cur === 0;
+  $('last').disabled = $('next').disabled = state.cur >= n - 1;
+
+  const marked = new Set();
+  for (const h of state.hits) if (h.on) marked.add(h.page);
+  for (const m of state.manual) marked.add(m.page);
+  [...$('rail').children].forEach((c, i) => c.classList.toggle('hasbox', marked.has(i)));
+
+  const list = [...marked].sort((a, b) => a - b).map((p) => p + 1);
+  $('jumpmark').textContent = list.length
+    ? `redactions on page${list.length > 1 ? 's' : ''} ${
+        list.length > 8 ? list.slice(0, 8).join(', ') + '…' : list.join(', ')}`
+    : '';
 }
 
 // ---------------------------------------------------------------- review list

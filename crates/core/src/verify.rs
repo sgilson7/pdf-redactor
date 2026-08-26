@@ -66,6 +66,100 @@ const FORBIDDEN: &[&str] = &[
     "/ModDate", "/GoToR", "/Launch", "/URI",
 ];
 
+/// Find `needle` in `hay`.
+fn find_at(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (from..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+}
+
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    find_at(hay, needle, 0).is_some()
+}
+
+/// The file split into the parts worth inspecting.
+pub struct Views {
+    /// Every byte outside a stream payload: the object dictionaries, the xref
+    /// table, the trailer. Structural checks belong here and nowhere else.
+    pub dicts: Vec<u8>,
+    /// The payloads of non-image streams, i.e. our content streams.
+    pub content: Vec<u8>,
+}
+
+/// Split a document into dictionaries and content, discarding image payloads.
+///
+/// Scanning the whole file instead is both wrong and ruinous. A JPEG is
+/// effectively random bytes, so a short token like `/JS` turns up in it by
+/// chance roughly every 16 MB - reporting a leak in a file that has none. And
+/// normalizing tens of megabytes of image data costs gigabytes of allocation,
+/// which on a large document simply aborts the module. Image payloads cannot
+/// contain recoverable text anyway: that is the point of rasterizing.
+pub fn views(pdf: &[u8]) -> Views {
+    let mut dicts = Vec::with_capacity(pdf.len() / 16);
+    let mut content = Vec::new();
+    let mut i = 0;
+    let mut copied = 0;
+
+    while let Some(kw) = find_at(pdf, b"stream", i) {
+        // "endstream" contains "stream", so a naive scan re-enters on a
+        // stream's own terminator and swallows the rest of the file - trailer
+        // and all.
+        if kw >= 3 && &pdf[kw - 3..kw] == b"end" {
+            i = kw + b"stream".len();
+            continue;
+        }
+
+        // Decide from the dictionary immediately before the keyword.
+        let back = kw.saturating_sub(400);
+        let dict = &pdf[back..kw];
+        let is_image = contains(dict, b"/DCTDecode");
+
+        // Payload starts after the keyword and its end-of-line marker.
+        let mut start = kw + b"stream".len();
+        if pdf.get(start) == Some(&b'\r') {
+            start += 1;
+        }
+        if pdf.get(start) == Some(&b'\n') {
+            start += 1;
+        }
+
+        // Prefer the declared /Length; fall back to searching for the keyword.
+        let end = declared_length(dict)
+            .filter(|n| start + n <= pdf.len())
+            .map(|n| start + n)
+            .or_else(|| find_at(pdf, b"endstream", start))
+            .unwrap_or(pdf.len());
+
+        dicts.extend_from_slice(&pdf[copied..start]);
+        if !is_image {
+            content.extend_from_slice(&pdf[start..end]);
+        }
+        copied = end;
+        i = end.max(kw + 1);
+    }
+    dicts.extend_from_slice(&pdf[copied..]);
+
+    Views { dicts, content }
+}
+
+/// Parse `/Length N` out of a stream dictionary.
+fn declared_length(dict: &[u8]) -> Option<usize> {
+    let at = find_at(dict, b"/Length", 0)?;
+    let mut j = at + b"/Length".len();
+    while dict.get(j).is_some_and(|c| c.is_ascii_whitespace()) {
+        j += 1;
+    }
+    let s = j;
+    while dict.get(j).is_some_and(|c| c.is_ascii_digit()) {
+        j += 1;
+    }
+    if j == s {
+        return None;
+    }
+    std::str::from_utf8(&dict[s..j]).ok()?.parse().ok()
+}
+
 /// Pull every literal string out of the file's content streams.
 ///
 /// This works precisely because `pdfwrite` leaves content streams uncompressed.
@@ -121,26 +215,32 @@ pub fn verify(
     redactions: usize,
 ) -> Report {
     let mut findings = Vec::new();
+    let v = views(pdf);
 
     // 1. Structural. We know what we wrote; anything else is a defect.
-    let hay = String::from_utf8_lossy(pdf);
+    //    Checked against dictionaries only - see `views`.
     for key in FORBIDDEN {
-        if hay.contains(key) {
+        if contains(&v.dicts, key.as_bytes()) {
             findings.push(Finding::Structure((*key).to_string()));
         }
     }
 
     // 2. Exactly one revision. Multiple %%EOF markers mean an earlier,
     //    unredacted version of a page is still recoverable from the file.
-    let revs = hay.matches("%%EOF").count();
+    let mut revs = 0;
+    let mut at = 0;
+    while let Some(p) = find_at(&v.dicts, b"%%EOF", at) {
+        revs += 1;
+        at = p + 5;
+    }
     if revs != 1 {
         findings.push(Finding::MultipleRevisions(revs));
     }
 
-    // 3. Textual. Check the text layer the way a reader would, and the raw
-    //    bytes the way an attacker would.
-    let literals = normalize_term(&extract_literals(pdf));
-    let raw = normalize_term(&hay);
+    // 3. Textual. Check the text layer the way a reader would, and the
+    //    dictionaries the way an attacker would.
+    let literals = normalize_term(&extract_literals(&v.content));
+    let raw = normalize_term(&String::from_utf8_lossy(&v.dicts));
 
     // Normalize the incoming terms too. Callers legitimately pass whatever the
     // user saw on screen ("Jane Doe"), while both haystacks are folded to
