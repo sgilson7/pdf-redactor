@@ -89,6 +89,16 @@ fn join(items: &[TextItem]) -> (String, Vec<(usize, usize)>) {
             if p.eol || moved_line || carriage_return {
                 text.push('\n');
                 map.push((i, 0));
+            } else if (it.h - p.h).abs() > p.h.max(it.h) * 0.25 {
+                // A markedly different font size sitting flush against the
+                // previous run is a superscript or subscript, not a
+                // continuation of the word. Fusing them turns
+                // "Benyamin Tabarsi" followed by an affiliation marker into
+                // "benyamin tabarsi1", and the trailing digit then fails the
+                // word-boundary test, so the name is not matched at all. A
+                // genuine mid-word split always carries the same font size.
+                text.push(' ');
+                map.push((i, 0));
             } else {
                 // A fragment split mid-word ("Ja" + "ne") sits flush against the
                 // previous one; a real word gap leaves horizontal space. Using

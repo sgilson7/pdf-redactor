@@ -32,6 +32,8 @@ def main():
     ap.add_argument("--export", action="store_true")
     ap.add_argument("--expect-none", action="store_true",
                     help="image-only documents have nothing to search")
+    ap.add_argument("--approve-all", action="store_true",
+                    help="tick every candidate, including medium and low")
     ap.add_argument("--pager", action="store_true",
                     help="exercise page navigation")
     ap.add_argument("--draw", action="store_true",
@@ -114,6 +116,18 @@ def main():
             m = row.locator(".m").inner_text() if row.locator(".m").count() else "?"
             ck = row.locator("input").is_checked() if row.locator("input").count() else False
             print(f"    [{'x' if ck else ' '}] {t:7} {m}")
+
+        if args.approve_all:
+            n = page.evaluate("""() => {
+              const S = window.__redactor.state;
+              S.hits.forEach(h => h.on = true);
+              return S.hits.length;
+            }""")
+            page.click("#scan") if False else None
+            page.evaluate("() => { document.getElementById('export').disabled = false; }")
+            # Re-render so boxes and counts reflect the change.
+            page.evaluate("() => window.dispatchEvent(new Event('resize'))")
+            print(f"  approved all {n} candidates")
 
         if args.pager:
             print("→ exercising the pager")

@@ -142,6 +142,12 @@ pub fn variants(name: &str, extra: &[String]) -> Vec<Variant> {
         push(format!("{} {}", first, li), "first + initial", Tier::Low, Kind::Name);
         push(format!("{}{}", fi, li), "initials", Tier::Low, Kind::Name);
         push(format!("{}.{}.", fi, li), "initials", Tier::Low, Kind::Name);
+        // Reference-list order. Bibliographies and inline citations write
+        // "Tabarsi B" or "Tabarsi, B.", which none of the first-name-first
+        // forms above reach - so an author's own paper cites them untouched.
+        push(format!("{} {}", last, fi), "last + initial", Tier::Low, Kind::Name);
+        push(format!("{} {}.", last, fi), "last + initial", Tier::Low, Kind::Name);
+        push(format!("{}, {}.", last, fi), "last, initial", Tier::Low, Kind::Name);
     } else {
         let tier = if is_risky_token(&first) { Tier::Low } else { Tier::High };
         push(first.clone(), "name", tier, Kind::Name);

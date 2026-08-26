@@ -21,14 +21,24 @@ run() { echo; echo "── $1 ────────────────�
 run "typed homework"  --tag homework --pdf homework.pdf --export
 run "gemini chatlog"  --tag chatlog  --pdf chatlog.pdf  --export
 run "wrapped lines"   --tag wrapped  --pdf wrapped.pdf  --extras "" --export
+run "author block"    --tag affil    --pdf affil.pdf    --extras "" --export
 run "image-only scan" --tag scanned  --pdf scanned.pdf  --extras "" --expect-none --draw --export
 
 echo
 echo "── adversarial checks on exported PDFs ──"
+# What must be absent depends on what each run actually approved. A declined
+# term legitimately survives -- the affiliation fixture leaves its address
+# unchecked on purpose -- so a single blanket pattern would fail a correct file.
+must_be_absent() {
+  case "$1" in
+    affil.pdf)   echo 'jane doe|Microsoft Word|Acme PDF' ;;
+    wrapped.pdf) echo 'jane doe|Microsoft Word|Acme PDF' ;;
+    *)           echo 'jane doe|jdoe2|ncsu\.edu|Microsoft Word|Acme PDF' ;;
+  esac
+}
 for f in "$ROOT"/testing/out/*.pdf; do
   n=$(basename "$f")
-  # Only the approved terms must be absent; a declined term legitimately remains.
-  leak=$(strings "$f" | grep -icE 'jane doe|jdoe2|ncsu\.edu|Microsoft Word|Acme PDF' || true)
+  leak=$(strings "$f" | grep -icE "$(must_be_absent "$n")" || true)
   meta=$(strings "$f" | grep -cE '/Info|/Author|/Producer|/Metadata|/Annots' || true)
   revs=$(strings "$f" | grep -c '%%EOF' || true)
   printf "  %-16s approved-terms:%s metadata:%s revisions:%s" "$n" "$leak" "$meta" "$revs"

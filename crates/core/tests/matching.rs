@@ -187,3 +187,33 @@ fn same_line_fragments_still_join_without_a_break() {
     let h = hits(&items, "Jane Doe");
     assert!(h.iter().any(|(_, t)| *t == Tier::High), "{:?}", h);
 }
+
+/// An affiliation marker set flush against a name must not fuse into it.
+/// "Benyamin Tabarsi" followed by a superscript "1" became "benyamin tabarsi1",
+/// and the trailing digit failed the word-boundary test, so a paper's own
+/// author line went unredacted.
+#[test]
+fn a_superscript_marker_does_not_swallow_the_name() {
+    let items = vec![
+        TextItem { text: "Benyamin Tabarsi".into(), x: 46.8, y: 367.4, w: 72.1, h: 9.5, eol: false },
+        // Superscript: smaller font, slightly raised, flush against the name.
+        TextItem { text: "1".into(), x: 118.9, y: 364.4, w: 3.5, h: 6.6, eol: false },
+        TextItem { text: " · Heidi Reichert".into(), x: 133.2, y: 367.4, w: 62.1, h: 9.5, eol: true },
+    ];
+    let h = hits(&items, "Benyamin Tabarsi");
+    assert!(
+        h.iter().any(|(_, t)| *t == Tier::High),
+        "name fused with its affiliation marker: {:?}", h
+    );
+}
+
+/// Reference-list order, as every bibliography writes it.
+#[test]
+fn last_name_then_initial_is_offered() {
+    let items = line(&[("Tabarsi B, Yasir T, Reichert H (2025) Herald", 0.0)]);
+    let h = hits(&items, "Benyamin Tabarsi");
+    assert!(
+        h.iter().any(|(m, _)| m.to_lowercase().starts_with("tabarsi b")),
+        "citation form not offered: {:?}", h
+    );
+}

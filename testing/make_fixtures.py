@@ -50,6 +50,45 @@ def text_pdf(path, lines, title="doc"):
     return path
 
 
+def affiliation_pdf(path):
+    """An author block in the shape academic papers actually use: the name
+    followed by a superscript affiliation marker set flush against it, and a
+    correspondence address that cannot be derived from the name."""
+    parts = [
+        (72, 720, 12, "Authors and Affiliations"),
+        (72, 696, 11, "Jane Doe"),
+        # Superscript: smaller font, raised baseline, flush against the name.
+        (118, 701, 7, "1"),
+        (124, 696, 11, "\\267 Heidi Reichert"),
+        (72, 660, 10, "btaghiz@ncsu.edu"),
+        (72, 640, 10, "Doe J, Reichert H (2025) A paper about things."),
+    ]
+    content = "".join(
+        f"BT /F1 {sz} Tf 1 0 0 1 {x} {y} Tm ({t}) Tj ET\n" for x, y, sz, t in parts
+    )
+    cb = content.encode()
+    objs = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Count 1/Kids[3 0 R]>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
+        b"/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>",
+        b"<</Length %d>>\nstream\n" % len(cb) + cb + b"\nendstream",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        b"<</Title(affil)/Author(Jane Doe)>>",
+    ]
+    buf = bytearray(b"%PDF-1.4\n"); offs = []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(buf)); buf += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(buf)
+    buf += b"xref\n0 %d\n" % (len(objs) + 1) + b"0000000000 65535 f \n"
+    for o in offs:
+        buf += b"%010d 00000 n \n" % o
+    buf += (b"trailer\n<</Size %d/Root 1 0 R/Info 6 0 R>>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objs) + 1, xref))
+    path.write_bytes(buf)
+    return path
+
+
 def image_pdf(path, pages_text):
     """Pages that are pure pixels - the stitched-PNG case, where there is no
     text layer to search and the name exists only as rendered glyphs."""
@@ -101,6 +140,8 @@ if __name__ == "__main__":
         "Contact provision.sh",
         "Jane again on the next line.",
     ], title="wrapped")
+
+    affiliation_pdf(OUT / "affil.pdf")
 
     image_pdf(OUT / "scanned.pdf", [
         ["CSC 116 Worksheet", "Name: Jane Doe", "", "1) x = 5", "2) y = 10"],

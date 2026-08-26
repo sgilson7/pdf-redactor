@@ -8,10 +8,29 @@
 use crate::matching::{Rect, TextItem};
 use crate::pdfwrite::TextSpan;
 
-/// Does the glyph cell `[x0,x1)` of `item` touch any redaction box?
+/// Fraction of a glyph cell that must fall inside a box before the character is
+/// dropped from the text layer.
+///
+/// Dropping on *any* overlap looks safer but is not. Boxes are padded outward
+/// so anti-aliasing cannot leave a legible sliver, and on tightly-set text that
+/// padding grazes the line below by a fraction of a point. That is enough to
+/// delete the next line from the searchable layer while leaving it plainly
+/// visible in the image - text that silently stops being findable without
+/// anything appearing redacted. A glyph that is actually covered overlaps
+/// almost entirely, so a modest threshold separates the two cases without ever
+/// keeping a glyph the reader cannot see.
+const COVER_FRACTION: f32 = 0.15;
+
+/// Is the glyph cell `[x0,x1)` of `item` substantially inside any box?
 fn covered(x0: f32, x1: f32, item: &TextItem, boxes: &[Rect]) -> bool {
+    let (gw, gh) = (x1 - x0, item.h);
+    if gw <= 0.0 || gh <= 0.0 {
+        return false;
+    }
     boxes.iter().any(|b| {
-        x0 < b.x + b.w && b.x < x1 && item.y < b.y + b.h && b.y < item.y + item.h
+        let ox = (x1.min(b.x + b.w) - x0.max(b.x)).max(0.0);
+        let oy = ((item.y + item.h).min(b.y + b.h) - item.y.max(b.y)).max(0.0);
+        (ox * oy) / (gw * gh) > COVER_FRACTION
     })
 }
 

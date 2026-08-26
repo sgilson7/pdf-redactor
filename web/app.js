@@ -10,7 +10,8 @@
 // zoom and export DPI is what keeps boxes from drifting.
 
 import * as pdfjs from './vendor/pdfjs/pdf.mjs';
-import init, { find_matches, Builder, verifyOutput, mergeBoxes } from './pkg/redactor_wasm.js';
+import init, { find_matches, findIdentifiers, Builder, verifyOutput, mergeBoxes }
+  from './pkg/redactor_wasm.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.mjs';
 const PDFJS_ASSETS = {
@@ -149,9 +150,8 @@ function scan() {
   state.hits = [];
   let id = 0;
   for (let p = 0; p < state.pages.length; p++) {
-    const found = JSON.parse(find_matches(
-      JSON.stringify(state.pages[p].items), name, JSON.stringify(extras),
-    ));
+    const items = JSON.stringify(state.pages[p].items);
+    const found = JSON.parse(find_matches(items, name, JSON.stringify(extras)));
     for (const m of found) {
       state.hits.push({
         id: id++, page: p, tier: m.tier, label: m.label,
@@ -159,6 +159,18 @@ function scan() {
         // Only high-confidence hits are pre-checked. Everything else is found
         // and offered, but requires a deliberate click.
         on: m.tier === 'high',
+      });
+    }
+
+    // Identifiers found by shape rather than by name. Left unchecked: a paper
+    // cites plenty of addresses belonging to nobody in the study, but the one
+    // that matters is often underivable from the name and would otherwise
+    // never be shown at all.
+    for (const c of JSON.parse(findIdentifiers(items))) {
+      if (state.hits.some((h) => h.page === p && h.matched === c.text)) continue;
+      state.hits.push({
+        id: id++, page: p, tier: 'medium', label: c.kind,
+        matched: c.text, context: c.text, boxes: c.boxes, on: false,
       });
     }
   }
@@ -571,5 +583,10 @@ function showReport(report, pdf) {
 
 function busy(t) { $('busytext').textContent = t; $('busy').hidden = false; }
 function idle() { $('busy').hidden = true; }
+
+// Debug handle: everything here is client-side already, and being able to
+// inspect what the matcher saw is the difference between diagnosing a missed
+// redaction and guessing at it.
+window.__redactor = { state, approvedBoxes };
 
 boot();

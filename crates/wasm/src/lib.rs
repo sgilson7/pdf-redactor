@@ -4,6 +4,7 @@
 //! gets redacted lives in `core`, where it runs under `cargo test` without a
 //! browser. This file only moves bytes and JSON across the boundary.
 
+use redactor_core::identifiers::find_identifiers;
 use redactor_core::matching::{find, merge_boxes, Rect, TextItem};
 use redactor_core::pdfwrite::{build, Page};
 use redactor_core::redact::filter_spans;
@@ -49,6 +50,26 @@ pub fn find_matches(items_json: &str, name: &str, extras_json: &str) -> Result<S
     let extras: Vec<String> = serde_json::from_str(extras_json).unwrap_or_default();
     let vars = variants(name, &extras);
     serde_json::to_string(&find(&items, &vars)).map_err(err)
+}
+
+#[derive(serde::Serialize)]
+struct IdOut {
+    kind: String,
+    text: String,
+    boxes: Vec<Rect>,
+}
+
+/// Find identifiers by shape rather than by name: emails, ORCID iDs, phone
+/// numbers. A username is only derivable from a name when the two happen to be
+/// related, which is often not the case.
+#[wasm_bindgen(js_name = findIdentifiers)]
+pub fn find_identifiers_js(items_json: &str) -> Result<String, JsValue> {
+    let items: Vec<TextItem> = serde_json::from_str(items_json).map_err(err)?;
+    let out: Vec<IdOut> = find_identifiers(&items)
+        .into_iter()
+        .map(|c| IdOut { kind: c.kind.label().to_string(), text: c.text, boxes: c.boxes })
+        .collect();
+    serde_json::to_string(&out).map_err(err)
 }
 
 /// Accumulates pages so the caller can stream one at a time and keep peak

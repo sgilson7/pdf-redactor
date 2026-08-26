@@ -66,6 +66,13 @@ entirely. Normalisation folds case, strips diacritics (`José` ≡ `Jose`), expa
 ligatures, removes zero-width characters, and rejoins words hyphenated across a
 line break (`Jo-\nhnson`).
 
+Alongside the name, the tool scans for identifiers by **shape** — email
+addresses, ORCID iDs, phone numbers — and offers them for review. A username is
+only derivable from a name when the two happen to be related: a paper redacted
+for *Benyamin Tabarsi* left `btaghiz@ncsu.edu` untouched, because no plausible
+derivation reaches it. These are never applied automatically, since plenty of
+documents cite addresses belonging to nobody in the study.
+
 Matching requires **whole words**: redacting `Docker` leaves `Dockerfile`
 alone, and a student named Kim is not redacted out of `Kimberly`. Substring
 occurrences are counted and reported at export so the choice is visible rather
