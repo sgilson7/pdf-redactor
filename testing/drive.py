@@ -32,6 +32,10 @@ def main():
     ap.add_argument("--export", action="store_true")
     ap.add_argument("--expect-none", action="store_true",
                     help="image-only documents have nothing to search")
+    ap.add_argument("--manifest", action="store_true",
+                    help="check the recorded manifest after export")
+    ap.add_argument("--forbid", default="",
+                    help="comma-separated words that must not appear in the manifest")
     ap.add_argument("--approve-all", action="store_true",
                     help="tick every candidate, including medium and low")
     ap.add_argument("--pager", action="store_true",
@@ -197,6 +201,32 @@ def main():
                 print(f"  downloaded -> {out}")
             else:
                 problems.append("verification failed; download blocked")
+
+        if args.manifest:
+            print("→ checking the manifest")
+            n = page.evaluate("() => JSON.parse(localStorage.getItem('pdf-redactor.manifest.v1')||'[]').length")
+            print(f"  entries recorded: {n}")
+            if n < 1:
+                problems.append("no manifest entry was recorded after export")
+            js = page.evaluate("""() => {
+              const e = JSON.parse(localStorage.getItem('pdf-redactor.manifest.v1')||'[]');
+              return window.__redactor.buildManifest(
+                document.getElementById('build').textContent.trim(), JSON.stringify(e));
+            }""")
+            out = ROOT / "out" / f"{args.tag}-manifest.json"
+            out.parent.mkdir(exist_ok=True)
+            out.write_text(js)
+            print(f"  wrote {out.name} ({len(js)} bytes)")
+            import json as _j
+            m = _j.loads(js)
+            if m.get("containsPersonalData") is not False:
+                problems.append("manifest does not declare containsPersonalData=false")
+            # The browser-level twin of the Rust guard test.
+            for word in args.forbid.split(",") if args.forbid else []:
+                if word and word.lower() in js.lower():
+                    problems.append(f"manifest leaked {word!r}")
+            print(f"  schema={m.get('schema')} docs={len(m.get('documents',[]))} "
+                  f"containsPersonalData={m.get('containsPersonalData')}")
 
         b.close()
     if httpd:

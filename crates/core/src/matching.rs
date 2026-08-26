@@ -27,6 +27,12 @@ pub struct TextItem {
     pub h: f32,
     /// The producer marked a line break after this fragment.
     pub eol: bool,
+    /// OCR confidence in [0,1], present only for items recovered by OCR.
+    ///
+    /// `Some(_)` is what marks an item as OCR-derived - there is no separate
+    /// flag that could drift out of step with it.
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

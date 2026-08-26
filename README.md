@@ -121,6 +121,35 @@ Chrome's print-to-PDF also renders the account display name and the avatar
 initial from the Gemini UI. The display name is normally real text and gets
 found; the avatar circle may be pixels, and needs a manual box.
 
+## The de-identification manifest
+
+Each completed export is recorded, and the accumulated record downloads as one
+JSON file. It exists because doing the redaction is only half the obligation —
+being able to demonstrate months later that you did it, to someone who was not
+there, is the other half. It also gives regression detection: reprocess a corpus
+after a tool update and diff the manifests, and a file that used to have 12
+redactions and now has 9 shows up immediately.
+
+**The manifest is deliberately not a FERPA record itself.** It carries hashes,
+counts, page numbers, and settings — never a name, a matched string, or a
+filename. That is enforced structurally rather than by filtering: `build_entry`
+has no parameter capable of carrying document text, and its only free-form
+fields are validated to be hashes and timestamps, so nothing can be smuggled
+through one. Terms are identified by ordinal rather than by a salted hash of the
+name, because a class roster is a population of a few hundred and any hash drawn
+from it is brute-forceable in microseconds — pseudonymous while looking
+anonymous.
+
+Documents are identified by SHA-256 of their bytes, and the file carries its own
+recipe for mapping entries back:
+
+```sh
+shasum -a 256 originals/*.pdf     # compare against the "input" field
+```
+
+Entries live in `localStorage`, which is only safe *because* they contain nothing
+identifying — the design choice pays for itself.
+
 ## Build version
 
 The build id shown in the top-right corner identifies exactly which version is

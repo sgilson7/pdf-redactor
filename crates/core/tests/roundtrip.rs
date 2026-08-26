@@ -45,7 +45,7 @@ fn submission() -> Vec<TextItem> {
             y: *y,
             w: t.chars().count() as f32 * 5.5,
             h: 12.0,
-            eol: true,
+            eol: true, confidence: None,
         })
         .collect()
 }
@@ -239,7 +239,7 @@ fn a_term_inside_a_longer_word_is_not_a_leak() {
             y: 100.0 + i as f32 * 20.0,
             w: t.chars().count() as f32 * 5.5,
             h: 12.0,
-            eol: true,
+            eol: true, confidence: None,
         })
         .collect();
 

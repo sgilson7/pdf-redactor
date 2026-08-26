@@ -10,7 +10,8 @@
 // zoom and export DPI is what keeps boxes from drifting.
 
 import * as pdfjs from './vendor/pdfjs/pdf.mjs';
-import init, { find_matches, findIdentifiers, Builder, verifyOutput, mergeBoxes }
+import init, { find_matches, findIdentifiers, Builder, verifyOutput, mergeBoxes,
+               buildManifestEntry, buildManifest }
   from './pkg/redactor_wasm.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.mjs';
@@ -46,6 +47,9 @@ async function boot() {
   $('last').onclick = () => show(state.pages.length - 1);
   $('pageno').onchange = (e) => show(+e.target.value - 1);
   $('dpi').onchange = updateSizeHint;
+  $('manifestdl').onclick = downloadManifest;
+  $('manifestclear').onclick = clearManifest;
+  refreshManifestBar();
 
   // Arrow keys page through, except while typing in a field.
   document.addEventListener('keydown', (e) => {
@@ -82,6 +86,10 @@ async function open(file) {
   busy('Reading document…');
   try {
     const data = new Uint8Array(await file.arrayBuffer());
+    // Hash now, while the original bytes are in hand: pdf.js takes ownership
+    // of the buffer and it is not reliably readable afterwards.
+    state.inputHash = await sha256Hex(data.slice());
+    state.ocrStats = null;
     state.doc = await pdfjs.getDocument({ data, ...PDFJS_ASSETS }).promise;
     state.pages = [];
     state.hits = [];
@@ -154,7 +162,7 @@ function scan() {
     const found = JSON.parse(find_matches(items, name, JSON.stringify(extras)));
     for (const m of found) {
       state.hits.push({
-        id: id++, page: p, tier: m.tier, label: m.label,
+        id: id++, page: p, kind: 'name', tier: m.tier, label: m.label,
         matched: m.matched, context: m.context, boxes: m.boxes,
         // Only high-confidence hits are pre-checked. Everything else is found
         // and offered, but requires a deliberate click.
@@ -169,7 +177,7 @@ function scan() {
     for (const c of JSON.parse(findIdentifiers(items))) {
       if (state.hits.some((h) => h.page === p && h.matched === c.text)) continue;
       state.hits.push({
-        id: id++, page: p, tier: 'medium', label: c.kind,
+        id: id++, page: p, kind: 'identifier', tier: 'medium', label: c.kind,
         matched: c.text, context: c.text, boxes: c.boxes, on: false,
       });
     }
@@ -505,6 +513,8 @@ async function doExport() {
       pdf, JSON.stringify(approved), JSON.stringify(declined),
       builder.pageCount, builder.redactionCount,
     ));
+    await recordManifestEntry(pdf, approved, declined,
+      { dpi, quality: 0.9, textLayer: wantText });
     showReport(report, pdf);
   } catch (e) {
     alert(`Export failed.\n\n${e.message ?? e}`);
@@ -579,6 +589,117 @@ function showReport(report, pdf) {
   $('modal').hidden = false;
 }
 
+// ---------------------------------------------------------------- manifest
+//
+// A durable record of what was redacted, which is deliberately not a record of
+// who. Entries carry hashes, counts, page numbers and settings -- never a name,
+// a matched string, or a filename. That is what makes it safe both to attach to
+// an IRB packet and to keep in localStorage, where anything identifying would
+// be a liability sitting on disk.
+
+const MANIFEST_KEY = 'pdf-redactor.manifest.v1';
+
+function loadEntries() {
+  try {
+    const raw = localStorage.getItem(MANIFEST_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];   // private window, cleared storage, or corrupt value
+  }
+}
+
+function saveEntries(entries) {
+  try {
+    localStorage.setItem(MANIFEST_KEY, JSON.stringify(entries));
+  } catch {
+    // Storage full or unavailable. The in-session entries still download.
+  }
+}
+
+function refreshManifestBar() {
+  const n = loadEntries().length;
+  $('manifestbar').hidden = n === 0;
+  $('manifestcount').textContent = `${n} document${n === 1 ? '' : 's'} recorded`;
+}
+
+async function sha256Hex(bytes) {
+  const d = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/// Record a completed export. Called only on success, since the manifest
+/// describes artifacts that exist.
+async function recordManifestEntry(pdf, approved, declined, settings) {
+  try {
+    const byPage = {};
+    let text = 0, ocr = 0, manual = 0;
+    for (const h of state.hits) {
+      if (!h.on) continue;
+      byPage[h.page + 1] = (byPage[h.page + 1] || 0) + h.boxes.length;
+      if (h.source === 'ocr') ocr += h.boxes.length; else text += h.boxes.length;
+    }
+    for (const m of state.manual) {
+      byPage[m.page + 1] = (byPage[m.page + 1] || 0) + 1;
+      manual += 1;
+    }
+
+    const names = state.hits.filter((h) => h.kind !== 'identifier');
+    const ids = state.hits.filter((h) => h.kind === 'identifier');
+    const split = (xs) => [xs.filter((h) => h.on).length, xs.filter((h) => !h.on).length];
+
+    const input = {
+      inputSha256: state.inputHash,
+      outputSha256: await sha256Hex(pdf),
+      processedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      pages: state.pages.length,
+      dpi: settings.dpi,
+      jpegQuality: settings.quality,
+      textLayer: settings.textLayer,
+      byPage,
+      textRedactions: text,
+      ocrRedactions: ocr,
+      manualRedactions: manual,
+      nameTerms: split(names),
+      identifierTerms: split(ids),
+      pagesWithoutText: state.pages
+        .map((p, i) => (p.noText ? i + 1 : 0)).filter(Boolean),
+      ocr: state.ocrStats ?? null,
+    };
+
+    const entry = JSON.parse(buildManifestEntry(
+      pdf, JSON.stringify(approved), JSON.stringify(declined), JSON.stringify(input),
+    ));
+    const entries = loadEntries();
+    entries.push(entry);
+    saveEntries(entries);
+    refreshManifestBar();
+  } catch (e) {
+    // A manifest failure must never cost the user their redacted document.
+    console.error('manifest entry not recorded:', e);
+  }
+}
+
+function downloadManifest() {
+  const entries = loadEntries();
+  if (!entries.length) return;
+  const json = buildManifest($('build').textContent.trim(), JSON.stringify(entries));
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'redaction-manifest.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+function clearManifest() {
+  const n = loadEntries().length;
+  if (!confirm(`Discard the record of ${n} document${n === 1 ? '' : 's'}? This cannot be undone.`)) {
+    return;
+  }
+  try { localStorage.removeItem(MANIFEST_KEY); } catch { /* nothing to do */ }
+  refreshManifestBar();
+}
+
 // ---------------------------------------------------------------- chrome
 
 function busy(t) { $('busytext').textContent = t; $('busy').hidden = false; }
@@ -587,6 +708,6 @@ function idle() { $('busy').hidden = true; }
 // Debug handle: everything here is client-side already, and being able to
 // inspect what the matcher saw is the difference between diagnosing a missed
 // redaction and guessing at it.
-window.__redactor = { state, approvedBoxes };
+window.__redactor = { state, approvedBoxes, buildManifest };
 
 boot();

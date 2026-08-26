@@ -1,4 +1,5 @@
 pub mod identifiers;
+pub mod manifest;
 pub mod matching;
 pub mod metrics;
 pub mod normalize;

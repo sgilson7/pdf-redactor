@@ -9,7 +9,11 @@ use redactor_core::matching::{find, merge_boxes, Rect, TextItem};
 use redactor_core::pdfwrite::{build, Page};
 use redactor_core::redact::filter_spans;
 use redactor_core::variants::{variants, Tier};
+use redactor_core::manifest::{
+    build_entry, manifest, OcrStats, Settings, Source, TermKind, TermStat,
+};
 use redactor_core::verify::verify;
+use std::collections::BTreeMap;
 use wasm_bindgen::prelude::*;
 
 /// Panics inside wasm otherwise surface as an opaque "unreachable executed".
@@ -170,6 +174,123 @@ pub fn verify_output(
 pub fn merge_boxes_js(boxes_json: &str) -> Result<String, JsValue> {
     let boxes: Vec<Rect> = serde_json::from_str(boxes_json).map_err(err)?;
     serde_json::to_string(&merge_boxes(boxes)).map_err(err)
+}
+
+/// Everything the manifest needs from the caller, and nothing that could carry
+/// document text. Mirrors `manifest::build_entry`'s signature deliberately.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntryInput {
+    input_sha256: String,
+    output_sha256: String,
+    processed_at: String,
+    pages: usize,
+    dpi: u32,
+    jpeg_quality: f32,
+    text_layer: bool,
+    by_page: BTreeMap<usize, usize>,
+    text_redactions: usize,
+    ocr_redactions: usize,
+    manual_redactions: usize,
+    name_terms: (usize, usize),
+    identifier_terms: (usize, usize),
+    pages_without_text: Vec<usize>,
+    ocr: Option<OcrIn>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OcrIn {
+    engine: String,
+    pages_scanned: Vec<usize>,
+    mean_confidence: f32,
+    words_below_threshold: usize,
+}
+
+/// Build one manifest entry. Verification is re-run here from the finished
+/// bytes rather than trusting a report handed in from JS.
+#[wasm_bindgen(js_name = buildManifestEntry)]
+pub fn build_manifest_entry(
+    pdf: &[u8],
+    approved_json: &str,
+    declined_json: &str,
+    input_json: &str,
+) -> Result<String, JsValue> {
+    let i: EntryInput = serde_json::from_str(input_json).map_err(err)?;
+    let approved: Vec<String> = serde_json::from_str(approved_json).unwrap_or_default();
+    let declined: Vec<String> = serde_json::from_str(declined_json).unwrap_or_default();
+
+    let total = i.text_redactions + i.ocr_redactions + i.manual_redactions;
+    let report = verify(pdf, &approved, &declined, i.pages, total);
+
+    let mut by_source = BTreeMap::new();
+    for (k, v) in [
+        (Source::Text, i.text_redactions),
+        (Source::Ocr, i.ocr_redactions),
+        (Source::Manual, i.manual_redactions),
+    ] {
+        if v > 0 {
+            by_source.insert(k, v);
+        }
+    }
+
+    let mut terms = Vec::new();
+    if i.name_terms.0 + i.name_terms.1 > 0 {
+        terms.push(TermStat {
+            ordinal: 1,
+            kind: TermKind::Name,
+            applied: i.name_terms.0,
+            declined: i.name_terms.1,
+        });
+    }
+    if i.identifier_terms.0 + i.identifier_terms.1 > 0 {
+        terms.push(TermStat {
+            ordinal: terms.len() + 1,
+            kind: TermKind::Identifier,
+            applied: i.identifier_terms.0,
+            declined: i.identifier_terms.1,
+        });
+    }
+
+    let entry = build_entry(
+        &i.input_sha256,
+        &i.output_sha256,
+        &i.processed_at,
+        i.pages,
+        Settings { dpi: i.dpi, jpeg_quality: i.jpeg_quality, text_layer: i.text_layer },
+        i.by_page,
+        by_source,
+        terms,
+        i.pages_without_text,
+        i.ocr.map(|o| OcrStats {
+            engine: o.engine,
+            pages_scanned: o.pages_scanned,
+            mean_confidence: o.mean_confidence,
+            words_below_threshold: o.words_below_threshold,
+        }),
+        &report,
+    )
+    .map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
+
+    serde_json::to_string(&entry).map_err(err)
+}
+
+/// Wrap accumulated entries into the downloadable document.
+///
+/// Stored entries are spliced in as opaque JSON rather than parsed back into
+/// `Entry`. Giving `Entry` a `Deserialize` impl would create the one thing this
+/// module is built to prevent: a way to construct an entry out of arbitrary
+/// text. The wrapper's fields still come from `manifest()`, so the schema and
+/// the note stay defined in one place.
+#[wasm_bindgen(js_name = buildManifest)]
+pub fn build_manifest(build: &str, entries_json: &str) -> Result<String, JsValue> {
+    let documents: serde_json::Value = serde_json::from_str(entries_json).map_err(err)?;
+    if !documents.is_array() {
+        return Err(JsValue::from_str("entries must be an array"));
+    }
+    let mut wrapper = serde_json::to_value(manifest(build, vec![])).map_err(err)?;
+    wrapper["documents"] = documents;
+    serde_json::to_string_pretty(&wrapper).map_err(err)
 }
 
 fn err<E: std::fmt::Display>(e: E) -> JsValue {

@@ -111,7 +111,7 @@ mod tests {
             y: 100.0,
             w: text.chars().count() as f32 * 6.0,
             h: 12.0,
-            eol: true,
+            eol: true, confidence: None,
         }
     }
 

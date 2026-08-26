@@ -18,10 +18,12 @@ fail=0
 run() { echo; echo "── $1 ─────────────────────────"; shift; "$PY" "$ROOT/testing/drive.py" "$@" 2>&1 \
   | grep -vE '^127\.0\.0\.1' || fail=1; }
 
-run "typed homework"  --tag homework --pdf homework.pdf --export
+run "typed homework"  --tag homework --pdf homework.pdf --export \
+    --manifest --forbid "Jane,Doe,jdoe2,ncsu,homework.pdf"
 run "gemini chatlog"  --tag chatlog  --pdf chatlog.pdf  --export
 run "wrapped lines"   --tag wrapped  --pdf wrapped.pdf  --extras "" --export
-run "author block"    --tag affil    --pdf affil.pdf    --extras "" --export
+run "author block"    --tag affil    --pdf affil.pdf    --extras "" --export \
+    --manifest --forbid "Jane,Doe,btaghiz,ncsu,affil.pdf"
 run "image-only scan" --tag scanned  --pdf scanned.pdf  --extras "" --expect-none --draw --export
 
 echo

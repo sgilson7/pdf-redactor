@@ -288,7 +288,7 @@ mod tests {
     fn boxes_land_on_the_address() {
         let items = vec![TextItem {
             text: "mail: a@b.edu".into(),
-            x: 50.0, y: 100.0, w: 130.0, h: 10.0, eol: true,
+            x: 50.0, y: 100.0, w: 130.0, h: 10.0, eol: true, confidence: None,
         }];
         let c = find_identifiers(&items);
         assert_eq!(c.len(), 1);

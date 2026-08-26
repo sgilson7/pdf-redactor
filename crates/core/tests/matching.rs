@@ -9,7 +9,7 @@ fn line(parts: &[(&str, f32)]) -> Vec<TextItem> {
     for (t, gap) in parts {
         x += gap;
         let w = t.chars().count() as f32 * 6.0;
-        out.push(TextItem { text: (*t).into(), x, y: 100.0, w, h: 12.0, eol: false });
+        out.push(TextItem { text: (*t).into(), x, y: 100.0, w, h: 12.0, eol: false, confidence: None });
         x += w;
     }
     if let Some(l) = out.last_mut() {
@@ -72,7 +72,7 @@ fn matches_across_a_line_break() {
     // "Jo-\nhnson" hyphenated by the wrap.
     let mut items = line(&[("Name: Jo-", 0.0)]);
     items[0].eol = true;
-    items.push(TextItem { text: "hnson".into(), x: 50.0, y: 115.0, w: 30.0, h: 12.0, eol: true });
+    items.push(TextItem { text: "hnson".into(), x: 50.0, y: 115.0, w: 30.0, h: 12.0, eol: true, confidence: None });
     let h = hits(&items, "Amy Johnson");
     assert!(h.iter().any(|(_, t)| *t <= Tier::Medium), "hyphenated wrap missed: {:?}", h);
 }
@@ -154,10 +154,10 @@ fn empty_page_yields_nothing() {
 fn a_wrapped_line_does_not_glue_words_together() {
     let items = vec![
         TextItem { text: "a directory containing provision.sh".into(),
-                   x: 54.0, y: 100.0, w: 190.0, h: 12.0, eol: false },
+                   x: 54.0, y: 100.0, w: 190.0, h: 12.0, eol: false, confidence: None },
         // Next line: back at the left margin, lower down, and NOT flagged eol.
         TextItem { text: "docker build -t csc584-env .".into(),
-                   x: 54.0, y: 116.0, w: 150.0, h: 12.0, eol: false },
+                   x: 54.0, y: 116.0, w: 150.0, h: 12.0, eol: false, confidence: None },
     ];
     let h = hits(&items, "Docker");
     assert!(
@@ -171,9 +171,9 @@ fn a_wrapped_line_does_not_glue_words_together() {
 fn a_name_at_the_start_of_a_wrapped_line_is_found() {
     let items = vec![
         TextItem { text: "This assignment was submitted by".into(),
-                   x: 54.0, y: 100.0, w: 170.0, h: 12.0, eol: false },
+                   x: 54.0, y: 100.0, w: 170.0, h: 12.0, eol: false, confidence: None },
         TextItem { text: "Jane Doe on March 3.".into(),
-                   x: 54.0, y: 116.0, w: 110.0, h: 12.0, eol: false },
+                   x: 54.0, y: 116.0, w: 110.0, h: 12.0, eol: false, confidence: None },
     ];
     let h = hits(&items, "Jane Doe");
     assert!(h.iter().any(|(_, t)| *t == Tier::High),
@@ -195,10 +195,10 @@ fn same_line_fragments_still_join_without_a_break() {
 #[test]
 fn a_superscript_marker_does_not_swallow_the_name() {
     let items = vec![
-        TextItem { text: "Benyamin Tabarsi".into(), x: 46.8, y: 367.4, w: 72.1, h: 9.5, eol: false },
+        TextItem { text: "Benyamin Tabarsi".into(), x: 46.8, y: 367.4, w: 72.1, h: 9.5, eol: false, confidence: None },
         // Superscript: smaller font, slightly raised, flush against the name.
-        TextItem { text: "1".into(), x: 118.9, y: 364.4, w: 3.5, h: 6.6, eol: false },
-        TextItem { text: " · Heidi Reichert".into(), x: 133.2, y: 367.4, w: 62.1, h: 9.5, eol: true },
+        TextItem { text: "1".into(), x: 118.9, y: 364.4, w: 3.5, h: 6.6, eol: false, confidence: None },
+        TextItem { text: " · Heidi Reichert".into(), x: 133.2, y: 367.4, w: 62.1, h: 9.5, eol: true, confidence: None },
     ];
     let h = hits(&items, "Benyamin Tabarsi");
     assert!(
