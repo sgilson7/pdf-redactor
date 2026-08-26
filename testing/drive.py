@@ -35,10 +35,13 @@ def main():
     ap.add_argument("--draw", action="store_true",
                     help="drag a manual redaction box on page 1")
     ap.add_argument("--headed", action="store_true")
+    ap.add_argument("--url", default=None,
+                    help="test a deployed site instead of the local build")
     args = ap.parse_args()
 
     SHOTS.mkdir(exist_ok=True)
-    httpd = serve()
+    base = args.url.rstrip("/") if args.url else f"http://127.0.0.1:{PORT}"
+    httpd = None if args.url else serve()
     problems, logs = [], []
 
     with sync_playwright() as p:
@@ -51,15 +54,18 @@ def main():
         page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
         # Nothing should ever be requested off-origin. This is the privacy
         # claim, asserted rather than assumed.
+        # Nothing may be fetched from anywhere but the app's own origin. On the
+        # deployed site this is the privacy claim itself, checked rather than
+        # asserted.
         page.on("request", lambda r: problems.append(f"OFF-ORIGIN REQUEST: {r.url}")
-                if not r.url.startswith((f"http://127.0.0.1:{PORT}", "data:", "blob:")) else None)
+                if not r.url.startswith((base, "data:", "blob:")) else None)
 
         def shot(n):
             page.screenshot(path=str(SHOTS / f"{args.tag}-{n}.png"))
             print(f"  shot: {args.tag}-{n}.png")
 
-        print(f"→ loading http://127.0.0.1:{PORT}/")
-        page.goto(f"http://127.0.0.1:{PORT}/", wait_until="networkidle")
+        print(f"→ loading {base}/")
+        page.goto(f"{base}/", wait_until="networkidle")
         page.wait_for_timeout(900)
         shot("1-landing")
 
@@ -142,7 +148,8 @@ def main():
                 problems.append("verification failed; download blocked")
 
         b.close()
-    httpd.shutdown()
+    if httpd:
+        httpd.shutdown()
 
     print("\n=== console ===")
     for l in logs[-12:]:
