@@ -54,17 +54,33 @@ fi
 # internal asset URL means a changed build is simply a different URL, so a
 # stale copy can never be served for it.
 say "Stamping build version"
+
+# `sed -i ''` is BSD-only and fails on the Linux CI runner, and `shasum` is not
+# guaranteed there either. Keep both portable rather than working only on the
+# machine this was written on.
+sha256() {
+  if command -v shasum >/dev/null; then shasum -a 256; else sha256sum; fi
+}
+# Replace a literal string in a file, in place, on any sed.
+bust() { # file, literal-search, replacement
+  S="$2" R="$3" perl -0777 -pi -e 's/\Q$ENV{S}\E/$ENV{R}/g' "$1"
+}
+
 BUILD=$(cat "$WEB/app.js" "$WEB/pkg/$WASM.js" "$WEB/pkg/${WASM}_bg.wasm" \
-        | shasum -a 256 | cut -c1-8)
+        | sha256 | cut -c1-8)
 
 # app.js -> pkg/redactor_wasm.js -> redactor_wasm_bg.wasm: every hop needs it,
 # because the browser caches each URL independently.
-sed -i '' "s|from './pkg/$WASM.js'|from './pkg/$WASM.js?v=$BUILD'|" "$WEB/app.js"
-sed -i '' "s|new URL('${WASM}_bg.wasm', import.meta.url)|new URL('${WASM}_bg.wasm?v=$BUILD', import.meta.url)|" \
-  "$WEB/pkg/$WASM.js"
-sed -i '' "s|src=\"app.js\"|src=\"app.js?v=$BUILD\"|; s|href=\"styles.css\"|href=\"styles.css?v=$BUILD\"|" \
-  "$WEB/index.html"
-sed -i '' "s|__BUILD__|$BUILD|" "$WEB/index.html"
+bust "$WEB/app.js"          "from './pkg/$WASM.js'" "from './pkg/$WASM.js?v=$BUILD'"
+bust "$WEB/pkg/$WASM.js"    "new URL('${WASM}_bg.wasm', import.meta.url)" \
+                            "new URL('${WASM}_bg.wasm?v=$BUILD', import.meta.url)"
+bust "$WEB/index.html"      'src="app.js"'          "src=\"app.js?v=$BUILD\""
+bust "$WEB/index.html"      'href="styles.css"'     "href=\"styles.css?v=$BUILD\""
+bust "$WEB/index.html"      '__BUILD__'             "$BUILD"
+
+# Fail loudly rather than shipping a page that silently serves stale assets.
+grep -q "app.js?v=$BUILD" "$WEB/index.html" || die "cache-busting did not apply"
+grep -q "?v=$BUILD" "$WEB/pkg/$WASM.js"     || die "wasm URL not stamped"
 
 # Jekyll would otherwise skip the pkg/ directory and mangle assets.
 touch "$WEB/.nojekyll"
