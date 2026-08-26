@@ -217,3 +217,86 @@ fn last_name_then_initial_is_offered() {
         "citation form not offered: {:?}", h
     );
 }
+
+// --- OCR-derived matches ------------------------------------------------
+//
+// OCR word boxes arrive as ordinary TextItems carrying a confidence. Nothing
+// in the matcher is OCR-aware beyond the demotion rule: the point is that a
+// scanned page and a text page take the same path.
+
+/// Words as an OCR engine returns them: one item per word, no EOL flags,
+/// positioned by geometry alone.
+fn ocr_words(words: &[(&str, f32, f32, f32)], conf: f32) -> Vec<TextItem> {
+    words.iter().map(|(t, x, y, w)| TextItem {
+        text: (*t).into(), x: *x, y: *y, w: *w, h: 10.0, eol: false,
+        confidence: Some(conf),
+    }).collect()
+}
+
+fn line_of_words(conf: f32) -> Vec<TextItem> {
+    // "Name: Jane Doe" as four separate OCR word boxes with real gaps.
+    ocr_words(&[("Name:", 50.0, 100.0, 24.0), ("Jane", 78.0, 100.0, 20.0),
+                ("Doe", 102.0, 100.0, 16.0)], conf)
+}
+
+#[test]
+fn a_name_split_across_ocr_word_boxes_is_found() {
+    let h = hits(&line_of_words(0.95), "Jane Doe");
+    assert!(h.iter().any(|(m, _)| m == "Jane Doe"),
+        "OCR words did not join into a name: {:?}", h);
+}
+
+#[test]
+fn a_confident_ocr_name_stays_high() {
+    let m = find(&line_of_words(0.95), &variants("Jane Doe", &[]));
+    let hit = m.iter().find(|m| m.matched == "Jane Doe").expect("no match");
+    assert_eq!(hit.tier, Tier::High, "confident OCR should still be pre-applied");
+    assert_eq!(hit.source, redactor_core::matching::Source::Ocr);
+    assert!((hit.confidence.unwrap() - 0.95).abs() < 1e-6);
+}
+
+#[test]
+fn a_middling_ocr_name_is_demoted_to_medium() {
+    let m = find(&line_of_words(0.70), &variants("Jane Doe", &[]));
+    let hit = m.iter().find(|m| m.matched == "Jane Doe").expect("no match");
+    assert_eq!(hit.tier, Tier::Medium, "shaky OCR must not be pre-applied");
+}
+
+#[test]
+fn a_poor_ocr_name_is_demoted_to_low() {
+    let m = find(&line_of_words(0.40), &variants("Jane Doe", &[]));
+    let hit = m.iter().find(|m| m.matched == "Jane Doe").expect("no match");
+    assert_eq!(hit.tier, Tier::Low);
+}
+
+/// Confidence is the minimum, not the mean: one badly read word makes the
+/// whole match doubtful, and averaging would hide it behind its neighbours.
+#[test]
+fn confidence_is_the_weakest_word_not_the_average() {
+    let mut items = line_of_words(0.99);
+    items[2].confidence = Some(0.50);         // "Doe" read poorly
+    let m = find(&items, &variants("Jane Doe", &[]));
+    let hit = m.iter().find(|m| m.matched == "Jane Doe").expect("no match");
+    assert_eq!(hit.tier, Tier::Low, "a weak word must drag the match down");
+}
+
+/// Text-layer matches are unaffected by any of the above.
+#[test]
+fn text_layer_matches_report_no_confidence() {
+    let m = find(&line(&[("Name: Jane Doe", 0.0)]), &variants("Jane Doe", &[]));
+    let hit = &m[0];
+    assert_eq!(hit.source, redactor_core::matching::Source::Text);
+    assert!(hit.confidence.is_none());
+    assert_eq!(hit.tier, Tier::High);
+}
+
+/// Identifier scanning works on OCR items too, which is what makes an email
+/// inside a screenshot findable at all.
+#[test]
+fn an_email_in_an_image_is_found_by_shape() {
+    let items = ocr_words(&[("Contact:", 50.0, 100.0, 34.0),
+                            ("btaghiz@ncsu.edu", 88.0, 100.0, 70.0)], 0.93);
+    let found = redactor_core::identifiers::find_identifiers(&items);
+    assert_eq!(found.len(), 1, "{:?}", found.iter().map(|c| &c.text).collect::<Vec<_>>());
+    assert_eq!(found[0].text, "btaghiz@ncsu.edu");
+}

@@ -1,0 +1,3 @@
+tesseract-wasm 0.11.0 (BSD-2-Clause) + eng.traineddata from tessdata_fast (Apache-2.0).
+Vendored, not from a CDN: no third party learns which document you opened.
+Verified to run without cross-origin isolation, which GitHub Pages cannot provide.

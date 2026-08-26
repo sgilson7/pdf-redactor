@@ -28,6 +28,11 @@ pub enum Finding {
     /// were never redacted. Reported rather than ignored: whether a substring
     /// hit matters is a judgement only the reader can make.
     PartialWord { term: String, count: usize },
+    /// Some redactions came from OCR. Advisory, and important: unlike a
+    /// text-layer match the reader cannot confirm it by reading, and OCR can
+    /// miss text entirely rather than misreading it. Silence here would let a
+    /// scanned page appear as thoroughly checked as a typed one.
+    OcrDerived { count: usize, pages: Vec<usize> },
     /// More than one revision, i.e. incremental-update history is present.
     MultipleRevisions(usize),
 }
@@ -35,7 +40,10 @@ pub enum Finding {
 impl Finding {
     /// Blocking findings stop the download; advisory ones are reported.
     pub fn is_blocking(&self) -> bool {
-        !matches!(self, Finding::Residual { .. } | Finding::PartialWord { .. })
+        !matches!(
+            self,
+            Finding::Residual { .. } | Finding::PartialWord { .. } | Finding::OcrDerived { .. }
+        )
     }
 }
 
@@ -332,6 +340,17 @@ pub fn verify(
     }
 
     Report { findings, pages, redactions, bytes: pdf.len() }
+}
+
+/// Record that some of a document's redactions came from OCR.
+///
+/// Kept separate from `verify` because it is not something the finished bytes
+/// can reveal: an OCR-derived redaction and a text-derived one look identical
+/// in the output. Only the caller knows the provenance.
+pub fn note_ocr(report: &mut Report, count: usize, pages: Vec<usize>) {
+    if count > 0 {
+        report.findings.push(Finding::OcrDerived { count, pages });
+    }
 }
 
 /// Sanity check for the caller: were there pages with no text layer at all?

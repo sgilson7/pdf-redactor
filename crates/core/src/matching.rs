@@ -49,6 +49,34 @@ impl Rect {
     }
 }
 
+/// Where a match's text came from.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    /// The document's own text layer.
+    Text,
+    /// Text recovered from pixels by OCR.
+    Ocr,
+}
+
+/// Below this, OCR is guessing and the hit is demoted to Low.
+const OCR_LOW: f32 = 0.60;
+
+/// At or above this, a confident OCR read is treated like any other match.
+///
+/// Set from measurement rather than intuition. On real pages the engine's
+/// scores separate cleanly: correctly read words land between 0.83 and 0.97
+/// while misreads sit at 0.59 and below. An earlier value of 0.85 cut through
+/// the middle of the good band and rejected a correct read of light-on-dark
+/// terminal text at 0.83, where the engine is simply less certain about
+/// inverted glyphs than about print.
+///
+/// Erring low is also the safer direction. A wrongly trusted OCR read blacks
+/// out something innocuous - it over-redacts. The failure that actually leaks
+/// is OCR not seeing text at all, and no threshold protects against that; the
+/// visual-confirmation advisory is what covers it.
+const OCR_TRUSTED: f32 = 0.75;
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Match {
     pub tier: Tier,
@@ -64,6 +92,10 @@ pub struct Match {
     /// lower-tier matches nested inside higher-tier ones.
     pub start: usize,
     pub end: usize,
+    pub source: Source,
+    /// Lowest OCR confidence across the fragments this match spans. `None` for
+    /// text-layer matches.
+    pub confidence: Option<f32>,
 }
 
 /// Anti-aliasing bleeds past the reported glyph box. Under-padding leaves a
@@ -268,6 +300,7 @@ fn build(
         }
     }
 
+    let spans_idx: Vec<usize> = spans.iter().map(|(i, _, _)| *i).collect();
     let mut boxes = Vec::new();
     for (idx, first, last) in spans {
         let it = &items[idx];
@@ -291,6 +324,20 @@ fn build(
         return None;
     }
 
+    // An OCR-derived match is only as trustworthy as its least certain
+    // fragment, so take the minimum rather than an average: one badly read
+    // word is enough to make the whole match doubtful.
+    let confidence = spans_conf(items, &spans_idx);
+    let source = if confidence.is_some() { Source::Ocr } else { Source::Text };
+
+    // OCR can misread, and unlike text-layer matches the user cannot check it
+    // by reading. Demote so that only a confident read is ever pre-applied.
+    let tier = match confidence {
+        Some(c) if c < OCR_LOW => Tier::Low,
+        Some(c) if c < OCR_TRUSTED => tier.max(Tier::Medium),
+        _ => tier,
+    };
+
     let matched: String = jchars[js..je].iter().collect();
     let cs = js.saturating_sub(30);
     let ce = (je + 30).min(jchars.len());
@@ -304,7 +351,23 @@ fn build(
         boxes,
         start: js,
         end: je,
+        source,
+        confidence,
     })
+}
+
+/// Minimum confidence across the fragments a match touches, or `None` when the
+/// match came from the text layer.
+fn spans_conf(items: &[TextItem], idx: &[usize]) -> Option<f32> {
+    let mut out: Option<f32> = None;
+    for &i in idx {
+        match items.get(i).and_then(|it| it.confidence) {
+            Some(c) => out = Some(out.map_or(c, |o: f32| o.min(c))),
+            // A single text-layer fragment means this is not an OCR match.
+            None => return None,
+        }
+    }
+    out
 }
 
 /// Drop matches fully contained in a stronger match.

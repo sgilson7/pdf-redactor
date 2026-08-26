@@ -32,6 +32,10 @@ def main():
     ap.add_argument("--export", action="store_true")
     ap.add_argument("--expect-none", action="store_true",
                     help="image-only documents have nothing to search")
+    ap.add_argument("--scan-page", action="store_true",
+                    help="press the per-page image scan button")
+    ap.add_argument("--expect-no-ocr-assets", action="store_true",
+                    help="assert OCR assets were never fetched (lazy loading)")
     ap.add_argument("--manifest", action="store_true",
                     help="check the recorded manifest after export")
     ap.add_argument("--forbid", default="",
@@ -67,6 +71,9 @@ def main():
         # asserted.
         page.on("request", lambda r: problems.append(f"OFF-ORIGIN REQUEST: {r.url}")
                 if not r.url.startswith((base, "data:", "blob:")) else None)
+        ocr_assets = []
+        page.on("request", lambda r: ocr_assets.append(r.url)
+                if "/vendor/tesseract/" in r.url else None)
 
         def shot(n):
             page.screenshot(path=str(SHOTS / f"{args.tag}-{n}.png"))
@@ -110,7 +117,9 @@ def main():
         boxes = page.locator("#overlay .rbox").count()
         checked = page.locator("#list .hit input:checked").count()
         print(f"  {hits} hit(s), {checked} pre-checked, {boxes} box(es) drawn on page 1")
-        if hits == 0 and not args.expect_none:
+        # With --scan-page the interesting text is inside an image, so finding
+        # nothing on the first pass is the expected result, not a failure.
+        if hits == 0 and not args.expect_none and not args.scan_page:
             problems.append(f"no matches found for {args.name!r}")
         if hits and args.expect_none:
             problems.append(f"expected no matches but found {hits}")
@@ -157,6 +166,18 @@ def main():
             if not nxt_disabled:
                 problems.append("next not disabled on last page")
             shot("3c-pager")
+
+        if args.scan_page:
+            print("→ scanning images on the current page")
+            page.wait_for_selector("#scanpage:visible", timeout=30000)
+            page.click("#scanpage")
+            page.wait_for_selector("#busy", state="hidden", timeout=180000)
+            page.wait_for_timeout(800)
+            shot("3d-scanned")
+            hits2 = page.locator("#list .hit").count()
+            print(f"  hits after OCR: {hits2}")
+            if hits2 <= hits:
+                problems.append("scanning images produced no new candidates")
 
         if args.draw:
             print("→ drawing a manual box")
@@ -231,6 +252,11 @@ def main():
         b.close()
     if httpd:
         httpd.shutdown()
+
+    if args.expect_no_ocr_assets and ocr_assets:
+        problems.append(f"OCR assets fetched for a text-only document: {len(ocr_assets)} requests")
+    if ocr_assets:
+        print(f"\nOCR assets fetched: {len(ocr_assets)}")
 
     print("\n=== console ===")
     for l in logs[-12:]:

@@ -19,12 +19,13 @@ run() { echo; echo "── $1 ────────────────�
   | grep -vE '^127\.0\.0\.1' || fail=1; }
 
 run "typed homework"  --tag homework --pdf homework.pdf --export \
-    --manifest --forbid "Jane,Doe,jdoe2,ncsu,homework.pdf"
+    --manifest --forbid "Jane,Doe,jdoe2,ncsu,homework.pdf" --expect-no-ocr-assets
 run "gemini chatlog"  --tag chatlog  --pdf chatlog.pdf  --export
 run "wrapped lines"   --tag wrapped  --pdf wrapped.pdf  --extras "" --export
 run "author block"    --tag affil    --pdf affil.pdf    --extras "" --export \
     --manifest --forbid "Jane,Doe,btaghiz,ncsu,affil.pdf"
-run "image-only scan" --tag scanned  --pdf scanned.pdf  --extras "" --expect-none --draw --export
+run "screenshot page" --tag shot     --pdf screenshot.pdf --extras "" --scan-page --export
+run "image-only scan" --tag scanned  --pdf scanned.pdf  --extras "" --draw --export
 
 echo
 echo "── adversarial checks on exported PDFs ──"
@@ -34,6 +35,7 @@ echo "── adversarial checks on exported PDFs ──"
 must_be_absent() {
   case "$1" in
     affil.pdf)   echo 'jane doe|Microsoft Word|Acme PDF' ;;
+    shot.pdf)    echo 'jane doe|jdoe2' ;;
     wrapped.pdf) echo 'jane doe|Microsoft Word|Acme PDF' ;;
     *)           echo 'jane doe|jdoe2|ncsu\.edu|Microsoft Word|Acme PDF' ;;
   esac

@@ -202,6 +202,8 @@ pub fn build_entry(
             Finding::Structure(_) => structure_ok = false,
             Finding::Leak { .. } => text_ok = false,
             Finding::MultipleRevisions(n) => revisions = *n,
+            // Provenance is recorded in the `ocr` block, not as an advisory count.
+            Finding::OcrDerived { .. } => {}
         }
     }
 

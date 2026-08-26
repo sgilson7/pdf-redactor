@@ -10,6 +10,7 @@
 // zoom and export DPI is what keeps boxes from drifting.
 
 import * as pdfjs from './vendor/pdfjs/pdf.mjs';
+import { ocrPage, isLoaded as ocrLoaded, ENGINE as OCR_ENGINE } from './ocr.js';
 import init, { find_matches, findIdentifiers, Builder, verifyOutput, mergeBoxes,
                buildManifestEntry, buildManifest }
   from './pkg/redactor_wasm.js';
@@ -31,6 +32,8 @@ const state = {
   scale: 1,
   terms: { approved: [], declined: [] },
   scanned: false,
+  ocr: new Map(),        // page index -> { items, meanConfidence, wordsBelowThreshold }
+  hasImages: new Set(),  // pages that paint an image XObject
 };
 
 // ---------------------------------------------------------------- loading
@@ -47,6 +50,7 @@ async function boot() {
   $('last').onclick = () => show(state.pages.length - 1);
   $('pageno').onchange = (e) => show(+e.target.value - 1);
   $('dpi').onchange = updateSizeHint;
+  $('scanpage').onclick = scanCurrentPage;
   $('manifestdl').onclick = downloadManifest;
   $('manifestclear').onclick = clearManifest;
   refreshManifestBar();
@@ -95,6 +99,8 @@ async function open(file) {
     state.hits = [];
     state.manual = [];
     state.scanned = false;
+    state.ocr = new Map();
+    state.hasImages = new Set();
 
     for (let p = 1; p <= state.doc.numPages; p++) {
       busy(`Reading page ${p} of ${state.doc.numPages}…`);
@@ -117,6 +123,7 @@ async function open(file) {
     buildRail();
     await show(0);
     updateSizeHint();
+    findImagePages();      // background; never blocks opening a long document
     $('name').focus();
   } catch (e) {
     alert(`Could not open that PDF.\n\n${e.message}`);
@@ -148,22 +155,103 @@ async function readTextItems(page, vp) {
   return out;
 }
 
+/// Flag pages that paint an image, since a name can sit in one as pixels with
+/// nothing in the text layer to find. Runs in the background after the document
+/// opens: `getOperatorList` parses each page, and doing 125 of those up front
+/// would add tens of seconds to a load that is already the slow part.
+async function findImagePages() {
+  const IMAGE_OPS = new Set([
+    pdfjs.OPS.paintImageXObject,
+    pdfjs.OPS.paintJpegXObject,
+    pdfjs.OPS.paintImageMaskXObject,
+    pdfjs.OPS.paintInlineImageXObject,
+  ].filter((v) => v !== undefined));
+
+  const doc = state.doc;
+  for (let p = 0; p < state.pages.length; p++) {
+    if (state.doc !== doc) return;    // a different document was opened
+    try {
+      const page = await doc.getPage(p + 1);
+      const ops = await page.getOperatorList();
+      if (ops.fnArray.some((fn) => IMAGE_OPS.has(fn))) {
+        state.hasImages.add(p);
+        markRail(p);
+        if (p === state.cur) updateScanButton();
+      }
+    } catch {
+      // A page we cannot parse simply goes unflagged.
+    }
+    if (p % 8 === 7) await new Promise((r) => setTimeout(r, 0));   // yield
+  }
+}
+
+function markRail(p) {
+  const el = $('rail').children[p];
+  if (el && !el.querySelector('.imgmark')) {
+    const m = document.createElement('span');
+    m.className = 'imgmark';
+    m.textContent = '⧉';
+    m.title = 'Contains an image — may hide text';
+    el.appendChild(m);
+  }
+}
+
+/// OCR a set of pages, merging the results into the page's items.
+async function runOcr(pageIndices) {
+  const done = [];
+  for (const p of pageIndices) {
+    if (state.ocr.has(p)) { done.push(p); continue; }
+    busy(`Reading page ${p + 1} with OCR…`);
+    try {
+      const page = await state.doc.getPage(p + 1);
+      const r = await ocrPage(page, (stage) => busy(stage),
+                              (pct) => busy(`Reading page ${p + 1} with OCR… ${pct}%`));
+      state.ocr.set(p, r);
+      done.push(p);
+    } catch (e) {
+      console.error(`OCR failed on page ${p + 1}:`, e);
+      alert(`Could not run OCR on page ${p + 1}.\n\n${e.message ?? e}`);
+      break;
+    }
+  }
+  idle();
+  return done;
+}
+
+/// Everything the matcher should see for a page: its text layer plus anything
+/// OCR recovered. Both are plain TextItems, so the matcher cannot tell them
+/// apart and does not need to.
+function itemsFor(p) {
+  const base = state.pages[p].items;
+  const ocr = state.ocr.get(p);
+  return ocr ? base.concat(ocr.items) : base;
+}
+
 // ---------------------------------------------------------------- scanning
 
-function scan() {
+async function scan() {
   const name = $('name').value.trim();
   if (!name) { $('name').focus(); return; }
   const extras = $('extras').value.split(',').map((s) => s.trim()).filter(Boolean);
 
+  // A page with no text layer cannot be searched at all, so OCR it before
+  // looking. Image-bearing pages that *do* have text are left to the per-page
+  // control: scanning them all is slow and usually unnecessary.
+  const blind = state.pages
+    .map((pg, i) => (pg.noText && !state.ocr.has(i) ? i : -1))
+    .filter((i) => i >= 0);
+  if (blind.length) await runOcr(blind);
+
   state.hits = [];
   let id = 0;
   for (let p = 0; p < state.pages.length; p++) {
-    const items = JSON.stringify(state.pages[p].items);
+    const items = JSON.stringify(itemsFor(p));
     const found = JSON.parse(find_matches(items, name, JSON.stringify(extras)));
     for (const m of found) {
       state.hits.push({
         id: id++, page: p, kind: 'name', tier: m.tier, label: m.label,
         matched: m.matched, context: m.context, boxes: m.boxes,
+        source: m.source, confidence: m.confidence,
         // Only high-confidence hits are pre-checked. Everything else is found
         // and offered, but requires a deliberate click.
         on: m.tier === 'high',
@@ -277,16 +365,48 @@ async function show(idx) {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
+  updateBanner(idx);
+  updateScanButton();
+  renderBoxes();
+}
+
+function updateBanner(idx) {
   const banner = $('banner');
-  if (state.pages[idx].noText) {
+  const pg = state.pages[idx];
+  if (state.ocr.has(idx)) {
+    // Must not simply disappear: OCR can miss text outright rather than
+    // misreading it, so a scanned page is never as checked as a typed one.
+    const r = state.ocr.get(idx);
     banner.hidden = false;
     banner.textContent =
-      `⚠ Page ${idx + 1} has no text layer. Automatic detection cannot run here — ` +
-      `draw any redactions by hand.`;
+      `⚠ Page ${idx + 1} was read by OCR (${r.items.length} words, ` +
+      `mean confidence ${r.meanConfidence.toFixed(2)}). OCR can miss text entirely — ` +
+      `confirm this page visually.`;
+  } else if (pg.noText) {
+    banner.hidden = false;
+    banner.textContent =
+      `⚠ Page ${idx + 1} has no text layer. Press Find to read it with OCR, or ` +
+      `draw redactions by hand.`;
   } else {
     banner.hidden = true;
   }
-  renderBoxes();
+}
+
+function updateScanButton() {
+  const b = $('scanpage');
+  // Offered where it can help: a page holding an image whose text has not yet
+  // been recovered.
+  const useful = state.hasImages.has(state.cur) && !state.ocr.has(state.cur);
+  b.hidden = !useful;
+}
+
+/// OCR the current page on request, then re-run matching so anything found is
+/// offered immediately.
+async function scanCurrentPage() {
+  await runOcr([state.cur]);
+  updateBanner(state.cur);
+  updateScanButton();
+  if (state.scanned) await scan(); else renderBoxes();
 }
 
 /// Boxes live as DOM overlays during review so they stay clickable. They are
@@ -429,7 +549,10 @@ function renderList() {
     body.innerHTML =
       `<div class="m"></div>` +
       `<div class="meta"><span class="tier ${h.tier}">${h.tier}</span>` +
-      `<span>${h.label}</span><span>· page ${h.page + 1}</span></div>` +
+      `<span>${h.label}</span>` +
+      (h.source === 'ocr'
+        ? `<span class="ocrtag">OCR ${h.confidence?.toFixed(2) ?? ''}</span>` : '') +
+      `<span>· page ${h.page + 1}</span></div>` +
       `<div class="ctx"></div>`;
     body.querySelector('.m').textContent = h.matched;
     // Context is shown so a real name can be told apart from a coincidence.
@@ -498,7 +621,7 @@ async function doExport() {
 
       builder.addPage(
         bytes, canvas.width, canvas.height, state.pages[p].w, state.pages[p].h,
-        JSON.stringify(state.pages[p].items), JSON.stringify(boxes), wantText,
+        JSON.stringify(itemsFor(p)), JSON.stringify(boxes), wantText,
       );
       // Release the bitmap before the next page. Holding them all is what would
       // exhaust memory on a long document.
@@ -513,6 +636,25 @@ async function doExport() {
       pdf, JSON.stringify(approved), JSON.stringify(declined),
       builder.pageCount, builder.redactionCount,
     ));
+
+    // Provenance is something only this side knows: an OCR-derived redaction
+    // and a text-derived one are indistinguishable in the finished bytes.
+    const ocrPages = [...state.ocr.keys()].sort((a, b) => a - b);
+    const ocrRedactions = state.hits.filter((h) => h.on && h.source === 'ocr').length;
+    if (ocrRedactions > 0) {
+      report.findings.push({
+        OcrDerived: { count: ocrRedactions, pages: ocrPages.map((p) => p + 1) },
+      });
+    }
+    if (ocrPages.length) {
+      const all = ocrPages.map((p) => state.ocr.get(p));
+      state.ocrStats = {
+        engine: OCR_ENGINE,
+        pagesScanned: ocrPages.map((p) => p + 1),
+        meanConfidence: all.reduce((a, r) => a + r.meanConfidence, 0) / all.length,
+        wordsBelowThreshold: all.reduce((a, r) => a + r.wordsBelowThreshold, 0),
+      };
+    }
     await recordManifestEntry(pdf, approved, declined,
       { dpi, quality: 0.9, textLayer: wantText });
     showReport(report, pdf);
@@ -524,9 +666,11 @@ async function doExport() {
 }
 
 function showReport(report, pdf) {
-  const blocking = report.findings.filter((f) => !('Residual' in f) && !('PartialWord' in f));
+  const blocking = report.findings.filter(
+    (f) => !('Residual' in f) && !('PartialWord' in f) && !('OcrDerived' in f));
   const residual = report.findings.filter((f) => 'Residual' in f);
   const partial = report.findings.filter((f) => 'PartialWord' in f);
+  const ocr = report.findings.filter((f) => 'OcrDerived' in f);
   const ok = blocking.length === 0;
 
   const rows = [];
@@ -551,14 +695,23 @@ function showReport(report, pdf) {
     }
   }
 
-  const noText = state.pages.map((p, i) => (p.noText ? i + 1 : 0)).filter(Boolean);
-  if (noText.length) {
-    row('warn', '⚠', `Page${noText.length > 1 ? 's' : ''} ${noText.join(', ')} had no text ` +
-        `layer — only manual redactions applied there`);
+  // Only pages still unread count as blind; an OCR'd page gets its own,
+  // more accurate warning below rather than two that contradict each other.
+  const blind = state.pages
+    .map((p, i) => (p.noText && !state.ocr.has(i) ? i + 1 : 0)).filter(Boolean);
+  if (blind.length) {
+    row('warn', '⚠', `Page${blind.length > 1 ? 's' : ''} ${blind.join(', ')} had no text ` +
+        `layer and were not read by OCR — only manual redactions applied there`);
   }
   for (const f of residual) {
     row('warn', '⚠', `“${f.Residual.term}” appears ${f.Residual.count}× in the output — ` +
         `you chose not to redact it`);
+  }
+  for (const f of ocr) {
+    const p = f.OcrDerived.pages;
+    row('warn', '⚠', `${f.OcrDerived.count} match${f.OcrDerived.count === 1 ? ' was' : 'es were'} ` +
+        `found by OCR on page${p.length === 1 ? '' : 's'} ${p.join(', ')}. OCR can miss ` +
+        `text entirely, not only misread it — confirm those pages visually.`);
   }
   for (const f of partial) {
     row('warn', '⚠', `“${f.PartialWord.term}” also appears inside ${f.PartialWord.count} ` +

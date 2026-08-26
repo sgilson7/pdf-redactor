@@ -94,11 +94,10 @@ out by the bare first-name variant.
 
 Being clear about this matters more than the feature list.
 
-- **Pages with no text layer cannot be searched.** Scans and PDFs assembled from
-  images have no text to find. The tool detects this, marks those pages, and
-  tells you plainly that only your manual boxes apply there. It does not OCR.
-- **Names inside images are pixels.** A screenshot showing `C:\Users\jdoe\` will
-  not be found by text search. Draw a box.
+- **OCR can miss text entirely**, not merely misread it, and a miss is silent.
+  Every page read by OCR is flagged in the report and keeps a banner asking you
+  to confirm it visually. Treat a scanned page as less thoroughly checked than a
+  typed one.
 - **Review is not optional.** Medium and Low hits exist because automatic
   matching cannot tell a student named Jane from a word problem about Jane.
 - **Long documents get large.** Rasterising a 125-page book at 200 DPI produces
@@ -108,6 +107,34 @@ Being clear about this matters more than the feature list.
   label — may get a box that does not sit squarely over it. Whole-page rotation
   is handled correctly. A misplaced box is visible during review and can be
   deleted and redrawn.
+
+## Pages whose text is pixels
+
+Scanned submissions, PDFs assembled from images, and screenshots pasted into an
+otherwise-normal page have no text to search. Those are read with OCR
+([tesseract-wasm](https://github.com/robertknight/tesseract-wasm), vendored and
+run entirely in the browser like everything else).
+
+- Pages with **no text layer at all** are read automatically when you press Find.
+- Pages that merely **contain an image** are marked ⧉ and get a *Scan images*
+  button, since scanning every page of a long document is slow and usually
+  pointless. This is the case that finds `/Users/jdoe2/` in a terminal
+  screenshot on a page whose text layer looks perfectly complete.
+
+OCR words become ordinary text fragments, so the same matcher, the same tiering,
+and the same review list handle them — including identifier scanning, which is
+what makes an email inside a screenshot findable. Matches carry the engine's
+confidence: a confident full name is pre-checked like any other, a shaky read is
+offered but never applied on its own.
+
+The page is flattened to greyscale before reading. Tesseract's region
+classification uses colour, and saturated text gets treated as graphics and
+skipped: on a syntax-highlighted terminal screenshot it read the grey lines at
+0.97 and silently dropped the green one containing a username. Removing the
+colour recovered it.
+
+Engine assets are ~8 MB and load **on first use**, never at startup, so
+documents that never need OCR never pay for it.
 
 ## A note on Gemini chatlogs
 

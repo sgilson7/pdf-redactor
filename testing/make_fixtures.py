@@ -8,6 +8,23 @@ multi-page mix.
 import zlib, struct, pathlib
 from PIL import Image, ImageDraw
 
+def mono(size):
+    """A real outline font at a legible size, wherever this runs."""
+    from PIL import ImageFont
+    for path in ("/System/Library/Fonts/Menlo.ttc",
+                 "/System/Library/Fonts/Supplemental/Courier New.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)      # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
+
+
 OUT = pathlib.Path(__file__).parent / "fixtures"
 OUT.mkdir(exist_ok=True)
 
@@ -89,6 +106,53 @@ def affiliation_pdf(path):
     return path
 
 
+def screenshot_pdf(path):
+    """A normal text page that also embeds a screenshot with a name in it.
+
+    This is the case text search can never reach: the page has a perfectly good
+    text layer, so nothing warns you, and the name is pixels inside an image."""
+    import zlib
+    # Render at the resolution a real screenshot has. PIL's default bitmap font
+    # is ~11px; scaled into place on the page it becomes an illegible smear
+    # that nothing can read, which tests the fixture rather than the tool.
+    shot = Image.new("RGB", (1400, 400), "#1e1e1e")
+    d = ImageDraw.Draw(shot)
+    d.text((36, 40), "Terminal - bash", fill="#cccccc", font=mono(34))
+    d.text((36, 150), "/Users/jdoe2/csc116/lab3 $ python lab3.py",
+           fill="#8ae234", font=mono(34))
+    d.text((36, 260), "Jane Doe's solution ran in 0.4s", fill="#cccccc", font=mono(34))
+    raw = zlib.compress(shot.tobytes())
+
+    text = ("BT /F1 12 Tf 1 0 0 1 72 720 Tm (CSC 116 - Lab 3 writeup) Tj ET\n"
+            "BT /F1 11 Tf 1 0 0 1 72 690 Tm (Here is my terminal output:) Tj ET\n"
+            "q 460 0 0 131 72 540 cm /Im0 Do Q\n"
+            "BT /F1 11 Tf 1 0 0 1 72 500 Tm (The loop terminates correctly.) Tj ET\n")
+    cb = text.encode()
+
+    objs = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Count 1/Kids[3 0 R]>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
+        b"/Resources<</Font<</F1 5 0 R>>/XObject<</Im0 6 0 R>>>>/Contents 4 0 R>>",
+        b"<</Length %d>>\nstream\n" % len(cb) + cb + b"\nendstream",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        (b"<</Type/XObject/Subtype/Image/Width %d/Height %d/ColorSpace/DeviceRGB"
+         b"/BitsPerComponent 8/Filter/FlateDecode/Length %d>>\nstream\n"
+         % (shot.width, shot.height, len(raw))) + raw + b"\nendstream",
+    ]
+    buf = bytearray(b"%PDF-1.4\n"); offs = []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(buf)); buf += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(buf)
+    buf += b"xref\n0 %d\n" % (len(objs) + 1) + b"0000000000 65535 f \n"
+    for o in offs:
+        buf += b"%010d 00000 n \n" % o
+    buf += (b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objs) + 1, xref))
+    path.write_bytes(buf)
+    return path
+
+
 def image_pdf(path, pages_text):
     """Pages that are pure pixels - the stitched-PNG case, where there is no
     text layer to search and the name exists only as rendered glyphs."""
@@ -142,6 +206,7 @@ if __name__ == "__main__":
     ], title="wrapped")
 
     affiliation_pdf(OUT / "affil.pdf")
+    screenshot_pdf(OUT / "screenshot.pdf")
 
     image_pdf(OUT / "scanned.pdf", [
         ["CSC 116 Worksheet", "Name: Jane Doe", "", "1) x = 5", "2) y = 10"],
